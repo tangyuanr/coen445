@@ -1,3 +1,5 @@
+#! /usr/bin/python
+
 import socket
 import sys
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -15,7 +17,7 @@ while True:
 
         # Receive the data in small chunks and retransmit it
         while True:
-            data = connection.recv(16)
+            data = connection.recv(1024)
             print >>sys.stderr, 'received "%s"' % data
             if data:
                 print >>sys.stderr, 'sending data back to the client'
