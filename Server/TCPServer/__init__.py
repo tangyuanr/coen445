@@ -7,7 +7,8 @@ __MAXSIZE__ = 1024
 
 
 class TCPServer:
-    """docstring for TCPServer."""
+    """Opens a TCP socket with host and port as arguments. Starts a thread for
+       listening and each client, sending is in main thread."""
 
     def __init__(self, HOST, PORT, msgQueue, MAXSIZE=1024):
         self.HOST = HOST
@@ -48,14 +49,17 @@ class TCPServer:
         self.TCPLstnr.stop()
         for t in self.connections:
             t.disconnect()
-        while len(threads) > 0:
-            threads = [t.join(1) for t in threads
-                       if t is not None and t.isAlive()]
+        while len(self.connections) > 0:
+            self.connections = [t.join(1) for t in self.connections
+                                if t is not None and t.isAlive()]
+
+    def getSocketAddress(self):
+        return self.serverSckt.getsockname()
 
 
 class TCPLstnr(threading.Thread):
     """Thread listening to new connections.
-    Appends new connections to connections"""
+       Opens new thread on new connection"""
 
     def __init__(self, name, serverSckt, recvQueue, connections):
         super(TCPLstnr, self).__init__()
@@ -70,6 +74,7 @@ class TCPLstnr(threading.Thread):
             try:
                 self.serverSckt.listen(5)
                 clientSckt, address = self.serverSckt.accept()
+                print "New connection from " + str(address)
                 connection = TCPCnxn(str(address), clientSckt,
                                      self.recvQueue)
                 connection.start()
@@ -79,7 +84,7 @@ class TCPLstnr(threading.Thread):
 
     def stop(self):
         self.killFlag.set()
-        self.serverSckt.shutdown(SHUT_RDWR)
+        self.serverSckt.shutdown(socket.SHUT_RDWR)
 
 
 class TCPCnxn(threading.Thread):
@@ -94,6 +99,7 @@ class TCPCnxn(threading.Thread):
 
     def run(self):
         while not self.killFlag.isSet():
+            print "Connection established with " + str(self.getRemoteAddress())
             try:
                 msg = [self]
                 msg.append(self.clientSckt.recv(__MAXSIZE__))
@@ -107,7 +113,6 @@ class TCPCnxn(threading.Thread):
     def send(self, msg):
         try:
             self.clientSckt.sendall(msg)
-            break
         except socket.error, error:
             print >>sys.stderr, "Socket error while sending. Code: "\
                                 + str(error[0]) + "Message: " + error[1]
@@ -115,8 +120,33 @@ class TCPCnxn(threading.Thread):
 
     def disconnect(self):
         self.killFlag.set()
-        self.clientSckt.shutdown(SHUT_WR)
+        self.clientSckt.shutdown(socket.SHUT_WR)
+
+    def getRemoteAddress(self):
+        return self.clientSckt.getpeername()
 
 
+# Example program using TCPServer
 if __name__ == '__main__':
-    
+    HOST = ''
+    PORT = 8888
+    recvQueue = Queue.Queue()
+    TCPServer = TCPServer(HOST, PORT, recvQueue)
+    print "Connection open on " + str(TCPServer.getSocketAddress())
+
+    try:
+        while True:
+            data = recvQueue.get()
+            if data[1] is None:
+                pass
+            elif data[1] == 'Bye!':
+                print "Disconnect request sent from "\
+                      + str(data[0].getRemoteAddress())
+                print "Disconnecting client"
+                TCPServer.disconnect(data[0])
+            else:
+                print "Received data from " + str(data[0].getRemoteAddress())
+                reply = "You sent: " + data[1]
+                data[0].send(reply)
+    except KeyboardInterrupt:
+        TCPServer.shutdown()
