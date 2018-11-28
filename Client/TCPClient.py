@@ -13,10 +13,10 @@ print >>sys.stderr, 'connecting to %s port %s' % server_address
 sock.connect(server_address)
 while not killFlag:
     msg = raw_input("Enter message to send: ")
-
+    msg = 'ABCDEFGHIJKLMNOPQ'
     try:
         sock.sendall(msg)
-        data, reply = sock.recv(1024)
+        reply = sock.recv(1024)
         if reply == 'Bye!':
             killFlag = True
         print str(reply)
