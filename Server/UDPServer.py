@@ -5,7 +5,7 @@ import threading
 import socket
 import sys
 import pickle
-
+from dbHandler import dbHandler
 
 __MAXSIZE__ = 1024
 
@@ -18,10 +18,12 @@ class UDPServer:
         self.PORT = PORT
         self.killFlag = threading.Event()
         self.recvQueue = msgQueue
+        self.DBHANDLER = dbHandler()
+
         self.ACTION_LIST = {
-            'Register': 0,
-            'Deregister': 1,
-            'Offer': 2
+            'REGISTER': self.register,
+            'DEREGISTER': self.deregister,
+            'OFFER': self.offer
         }
 
         global __MAXSIZE__
@@ -68,16 +70,95 @@ class UDPServer:
         self.sckt.close()
 
     def register(self, sender_info, data_packet):
+        print "***************Registration***************"
         sender_ip, sender_port = sender_info
         sender_name = data_packet['name']
+        RQ = data_packet['RQ']
+        status = self.DBHANDLER.register(sender_name, sender_ip, sender_port)
+        if status is not True:
+            # Unregister
+            reason = status[1]
+            print "Registration failed, reason: " + reason
+            response = {
+                'RQ': RQ,
+                'success': False,
+                'message-type': 'UNREGISTER',
+                'reason': reason
+            }
+            self.send(pickle.dumps(response), sender_info)
+
+        else:
+            print self.DBHANDLER.get_user_info(sender_name)
+            response = {
+                'RQ': RQ,
+                'success': True,
+                'message-type': 'REGISTERED',
+                'name': sender_name,
+                'ip': sender_ip,
+                'port': sender_port
+            }
+            self.send(pickle.dumps(response), sender_info)
+
+    def deregister(self, sender_info, data_packet):
+        # this should be an idempotent function, return true unless the db malfunctions
+        print "***************DEREGISTRATION******************"
+        sender_name = data_packet['name']
+        RQ = data_packet['RQ']
+
+        status = self.DBHANDLER.deregister(sender_name)
+        if status is not True:
+            response = {
+                'RQ': RQ,
+                'success': False,
+                'message-type': 'DEREG-DENIED',
+                'reason': status[1]
+            }
+            self.send(pickle.dumps(response), sender_info)
+        else:
+            response = {
+                'RQ': RQ,
+                'success': True,
+                'message-type': 'DEREG-CONF'
+            }
+            self.send(pickle.dumps(response), sender_info)
+
+    def offer(self, sender_info, data_packet):
+        print "********************OFFER**********************"
+        sender_ip = sender_info[0]
+        RQ = data_packet['RQ']
+        sender_name = data_packet['name']
+        description = data_packet['description']
+        minimum = data_packet['minimum']
+        status = self.DBHANDLER.new_offer(sender_name, description, sender_ip, minimum)
+
+        if status[0] is not True:
+            response = {
+                'RQ': RQ,
+                'success': False,
+                'message-type': 'OFFER-DENIED',
+                'reason': status[1]
+            }
+            self.send(pickle.dumps(response), sender_info)
+        else:
+            response = {
+                'RQ': RQ,
+                'success': True,
+                'message-type': 'OFFER-CONF',
+                'item-id': status[0],
+                'description': status[1],
+                'minimum': status[2]
+            }
+            self.send(pickle.dumps(response), sender_info)
 
     def receive(self, message):
         sender_info = message[1]
-        print "sender info: " + sender_info
+        print "sender info: ", sender_info
         data_packet = pickle.loads(message[0])
-        print "data packet " + data_packet
-
-
+        print "data packet ", data_packet
+        try:
+            self.ACTION_LIST[data_packet['message-type']](sender_info, data_packet)
+        except KeyError:
+            print "Request does not exist"
 
 
 class UDPReceive(threading.Thread):
@@ -130,11 +211,11 @@ if __name__ == '__main__':
                 break
             else:
                 udpserver.receive(msg)
-                print "Received message from: " + str(msg[1])
-                print pickle.loads(msg[0])
-                print "Sending reply."
-                toSend = "You sent: " + msg[0]
-                udpserver.send(toSend, msg[1])
+                # print "Received message from: " + str(msg[1])
+                # print pickle.loads(msg[0])
+                # print "Sending reply."
+                # toSend = "You sent: " + msg[0]
+                # udpserver.send(toSend, msg[1])
     except KeyboardInterrupt:
         print "Ctrl-C detected!"
     except socket.error:

@@ -25,15 +25,31 @@ class dbHandler:
             return False, e.message  # will trigger error if user is already registered
         return True
 
+    def get_user_info(self, name):
+        result = self.CURSOR.execute("""SELECT * FROM users WHERE name = ?""", (name, )).fetchone()
+        return result
+
     def is_registered(self, name):
         # assume that no user will use duplicated IP address when registering
         result = self.CURSOR.execute("""SELECT * FROM users WHERE name = ?""", (name,)).fetchall()
         return len(result) != 0
 
+    def get_user_active_offers(self, name):
+        result = self.CURSOR.execute("""SELECT * FROM offers WHERE name = ? AND finished = 0""", (name,)).fetchall()
+        return result
+
+    def get_user_active_biddings(self, name):
+        result = self.CURSOR.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID WHERE biddings.biddername=?  AND offers.finished=0""", (name,)).fetchall()
+        return result
+
     def deregister(self, name):
+        if len(self.get_user_active_offers(name)) != 0:
+            return False, "The auction for your offer(s) is not finished. Please wait until the end or cancel your offer(s)."
+        if len(self.get_user_active_biddings(name)) != 0:
+            return False, "The auction for the item(s) you have placed bids is not finished. Please wait until the end."
         try:
             self.CURSOR.execute("""DELETE FROM users WHERE name=?""", (name,))
-            self.CURSOR.execute("""DELETE FROM offers WHERE name=? AND finished=FALSE""", (name,))
+            self.CURSOR.execute("""DELETE FROM offers WHERE name=? AND finished=0""", (name,))
             # assume that bidding of deregistered user's offers continue
             self.CONN.commit()
         except sqlite3.Error as e:
@@ -66,7 +82,8 @@ class dbHandler:
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
-        return True
+        offer_id = self.CURSOR.execute("""SELECT ID, description, minimum FROM offers WHERE description=? AND name=?""", (description, name)).fetchone()
+        return True, offer_id
 
     def all_offers(self):
         return self.CURSOR.execute("""SELECT * FROM main.offers""").fetchall()
@@ -146,5 +163,9 @@ if __name__ == "__main__":
     print handler.register('new guy', '127.0.1.5', 12345)
     print handler.new_bidding(3, 'new guy', 88)
     print handler.highest_bidding(3)
-    print handler.close_bidding(3)
+    # print handler.close_bidding(3)
+    print handler.get_user_active_offers('nobody')
+    print handler.get_user_active_biddings('nobody')
+    # cur = handler.get_cursor()
+    # cur.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID""", ("nobody", )).fetchall()
     handler.close()
