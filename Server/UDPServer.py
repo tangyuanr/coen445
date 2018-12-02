@@ -6,6 +6,8 @@ import socket
 import sys
 import pickle
 from dbHandler import dbHandler
+from TCPServer import TCPServer
+
 
 __MAXSIZE__ = 1024
 
@@ -19,11 +21,14 @@ class UDPServer:
         self.killFlag = threading.Event()
         self.recvQueue = msgQueue
         self.DBHANDLER = dbHandler()
+        self.client_ip_list = {}
 
         self.ACTION_LIST = {
             'REGISTER': self.register,
             'DEREGISTER': self.deregister,
-            'OFFER': self.offer
+            'OFFER': self.offer,
+            'LOGIN': self.login,
+            'GET-ITEMS': self.get_items
         }
 
         global __MAXSIZE__
@@ -38,6 +43,9 @@ class UDPServer:
             raise
         try:
             self.sckt.bind((HOST, PORT))
+            print 'SERVER ADDRESS: '
+            print self.sckt.getsockname()
+            print socket.gethostbyname(socket.gethostname())
         except socket.error, msg:
             print >> sys.stderr, 'Bind failed. Error Code : ' + str(msg[0]) \
                                  + ' Message ' + msg[1]
@@ -88,6 +96,7 @@ class UDPServer:
             self.send(pickle.dumps(response), sender_info)
 
         else:
+            # Registered
             print self.DBHANDLER.get_user_info(sender_name)
             response = {
                 'RQ': RQ,
@@ -98,6 +107,38 @@ class UDPServer:
                 'port': sender_port
             }
             self.send(pickle.dumps(response), sender_info)
+            self.client_ip_list[sender_name] = sender_info
+
+    def login(self, sender_info, data_packet):
+        print "***************LOGIN**************************"
+        sender_name = data_packet['name']
+        RQ = data_packet['RQ']
+        sender_ip, sender_port = sender_info
+        if not self.DBHANDLER.is_registered(sender_name):
+            response = {
+                'RQ': RQ,
+                'success': False,
+                'message-type': 'LOGIN-FAILED',
+                'reason': 'User not registered'
+            }
+            self.send(pickle.dumps(response), sender_info)
+        else:
+            status = self.DBHANDLER.update_user_address(sender_name, sender_ip, sender_port)
+            if status is not True:
+                response = {
+                    'RQ': RQ,
+                    'success': False,
+                    'message-type': 'LOGIN-FAILED',
+                    'reason': status[1]
+                }
+                self.send(pickle.dumps(response), sender_info)
+            else:
+                response = {
+                    'RQ': RQ,
+                    'success': True,
+                    'message-type': 'LOGIN-CONF'
+                }
+                self.send(pickle.dumps(response), sender_info)
 
     def deregister(self, sender_info, data_packet):
         # this should be an idempotent function, return true unless the db malfunctions
@@ -121,6 +162,31 @@ class UDPServer:
                 'message-type': 'DEREG-CONF'
             }
             self.send(pickle.dumps(response), sender_info)
+
+    def new_item(self, item_id, description, minimum):
+        message_type = {}  # todo: ???what's message type?
+        tcp_server = TCPServer('', 0, Queue.Queue(), message_type)
+        port = tcp_server.getSocketAddress()
+        response = {
+            'message-type': 'NEW-ITEM',
+            'item-id': item_id,
+            'description': description,
+            'minimum': minimum,
+            'port': port
+        }
+
+        for client in self.client_ip_list:
+            self.send(pickle.dumps(response), self.client_ip_list[client])
+
+    def get_items(self, sender_info, data_packet):  # TODO: select active offers only
+        items = self.DBHANDLER.all_offers()
+        response = {
+            'RQ': data_packet['RQ'],
+            'success': True,
+            'message-type': 'ITEM-LIST',
+            'items': items
+        }
+        self.send(pickle.dumps(response), sender_info)
 
     def offer(self, sender_info, data_packet):
         print "********************OFFER**********************"
@@ -149,16 +215,22 @@ class UDPServer:
                 'minimum': status[2]
             }
             self.send(pickle.dumps(response), sender_info)
+            self.new_item(status[0], status[1], status[2])
 
     def receive(self, message):
         sender_info = message[1]
         print "sender info: ", sender_info
         data_packet = pickle.loads(message[0])
         print "data packet ", data_packet
-        try:
-            self.ACTION_LIST[data_packet['message-type']](sender_info, data_packet)
-        except KeyError:
-            print "Request does not exist"
+
+        if data_packet == 'CONNECT':
+            print "Received connection request"
+            self.send('OK', sender_info)
+        else:
+            try:
+                self.ACTION_LIST[data_packet['message-type']](sender_info, data_packet)
+            except KeyError:
+                print "Request does not exist"
 
 
 class UDPReceive(threading.Thread):
@@ -192,7 +264,7 @@ class UDPReceive(threading.Thread):
 
 if __name__ == '__main__':
     HOST = ''  # Symbolic name meaning all available interfaces
-    PORT = 8888  # Arbitrary non-privileged port
+    PORT = 0  # Arbitrary non-privileged port
     msgQueue = Queue.Queue()
 
     try:
@@ -211,6 +283,7 @@ if __name__ == '__main__':
                 break
             else:
                 udpserver.receive(msg)
+                print udpserver.client_ip_list
                 # print "Received message from: " + str(msg[1])
                 # print pickle.loads(msg[0])
                 # print "Sending reply."

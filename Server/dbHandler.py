@@ -34,6 +34,13 @@ class dbHandler:
         result = self.CURSOR.execute("""SELECT * FROM users WHERE name = ?""", (name,)).fetchall()
         return len(result) != 0
 
+    def update_user_address(self, name, ip, sckt):  # TODO test update user ip and port
+        try:
+            self.CURSOR.execute("""UPDATE users SET IP=?, socket=? WHERE name=?""", (ip, sckt, name))
+        except sqlite3.Error as e:
+            return False, e.message
+        return True
+
     def get_user_active_offers(self, name):
         result = self.CURSOR.execute("""SELECT * FROM offers WHERE name = ? AND finished = 0""", (name,)).fetchall()
         return result
@@ -113,6 +120,7 @@ class dbHandler:
             return False, "Need to bid higher than %s" % current_highest
         try:
             self.CURSOR.execute("""INSERT INTO biddings(itemID, biddername, amount) VALUES(?,?,?)""", (itemID, biddername, amount))
+            self.CURSOR.execute("""UPDATE offers SET finalprice=? WHERE ID=?""", (amount, itemID))
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
@@ -168,4 +176,5 @@ if __name__ == "__main__":
     print handler.get_user_active_biddings('nobody')
     # cur = handler.get_cursor()
     # cur.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID""", ("nobody", )).fetchall()
+    print handler.all_offers()
     handler.close()
