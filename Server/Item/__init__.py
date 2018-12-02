@@ -49,3 +49,21 @@ class Item (threading.Thread):
         # TODO: send bid-over message to all
         # TODO: send owner sold-to or not-sold message
         self.recvQueue.put(None)
+        self.TCPServer.shutdown()
+
+
+if __name__ == '__main__':
+    itemID = 99
+    name = "Beautifulest Object"
+    minimumBid = 100
+    HOST = ''
+    PORT = 8888
+    item = Item(itemID, name, minimumBid, HOST, PORT)
+    itemThread = item.start()
+    print "Connection open on " + str(item.TCPServer.getSocketAddress())
+
+    try:
+        while True:
+            item.join()
+    except KeyboardInterrupt:
+        item.closeBidding()
