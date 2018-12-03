@@ -7,14 +7,15 @@ class Item (threading.Thread):
     """Holds current item values and TCPServer for client connexion"""
 
     def __init__(self, itemID, name, minimumBid,
-                 owner, dbHandler, timeLeft=300, port=0):
+                 owner, timeLeft=300, port=0):
         self.itemID = itemID
         self.name = name
         self.highestBid = minimumBid
         self.owner = owner
         self.highestBidder = owner
         self.recvQueue = Queue.Queue()
-        self.dbHandler = dbHandler
+        # TODO Instantiate dbHandler on use
+        self.dbHandler = dbHandler()
         self.timeLeft = timeLeft
         self.server = TCPServer.TCPServer()
         self.biddingClosed = threading.Event()
