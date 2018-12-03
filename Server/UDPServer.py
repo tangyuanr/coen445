@@ -8,8 +8,7 @@ import pickle
 from dbHandler import dbHandler
 from TCPServer import TCPServer
 
-
-__MAXSIZE__ = 1024
+__MAXSIZE__ = 65535
 
 
 class UDPServer:
@@ -22,13 +21,16 @@ class UDPServer:
         self.recvQueue = msgQueue
         self.DBHANDLER = dbHandler()
         self.client_ip_list = {}
+        self.OFFER_BROADCAST_INTERVAL = 5.0
+        self.OFFER_COUNT = len(self.DBHANDLER.get_all_active_offers())
 
         self.ACTION_LIST = {
             'REGISTER': self.register,
             'DEREGISTER': self.deregister,
             'OFFER': self.offer,
             'LOGIN': self.login,
-            'GET-ITEMS': self.get_items
+            'GET-ITEMS': self.get_items,
+            'LOGOUT': self.logout
         }
 
         global __MAXSIZE__
@@ -54,6 +56,27 @@ class UDPServer:
         self.UDPRcvr = UDPReceive('UDPRcvr', self.killFlag,
                                   self.sckt, self.recvQueue)
         self.UDPRcvr.start()
+
+    def offers_broadcast(self):
+        threading.Timer(self.OFFER_BROADCAST_INTERVAL, self.offers_broadcast).start()
+        print 'im the offer broadcaster', len(self.client_ip_list), self.OFFER_COUNT
+
+        # self.offers_broadcast_thread.daemon = True
+        # self.offers_broadcast_thread.start()
+
+        if len(self.client_ip_list) != 0:
+            print "client list not empty"
+            if self.OFFER_COUNT != 0:
+                print 'offers not empty'
+                db = dbHandler()
+                offers = db.get_all_active_offers()
+                response = {
+                    'message-type': 'OFFER-BROADCAST',
+                    'offers': offers
+                }
+                for client in self.client_ip_list:
+                    print client, response
+                    self.send(pickle.dumps(response), self.client_ip_list[client])
 
     def send(self, message, dest):
         maxTries = 3
@@ -139,6 +162,7 @@ class UDPServer:
                     'message-type': 'LOGIN-CONF'
                 }
                 self.send(pickle.dumps(response), sender_info)
+                self.client_ip_list[sender_name] = sender_info
 
     def deregister(self, sender_info, data_packet):
         # this should be an idempotent function, return true unless the db malfunctions
@@ -196,6 +220,7 @@ class UDPServer:
         description = data_packet['description']
         minimum = data_packet['minimum']
         status = self.DBHANDLER.new_offer(sender_name, description, sender_ip, minimum)
+        self.OFFER_COUNT += 1
 
         if status[0] is not True:
             response = {
@@ -210,12 +235,38 @@ class UDPServer:
                 'RQ': RQ,
                 'success': True,
                 'message-type': 'OFFER-CONF',
-                'item-id': status[0],
-                'description': status[1],
-                'minimum': status[2]
+                'item-id': status[1],
+                'description': status[2],
+                'minimum': status[3]
             }
             self.send(pickle.dumps(response), sender_info)
             self.new_item(status[0], status[1], status[2])
+
+    def logout(self, sender_info, data_packet):
+        print "****************LOGOUT****************"
+        sender_ip = sender_info[0]
+        RQ = data_packet['RQ']
+        sender_name = data_packet['name']
+
+        status = self.DBHANDLER.user_isactive(sender_name)
+        if status is not False:
+            response = {
+                'RQ':RQ,
+                'message-type': 'LOGOUT-DENIED',
+                'reason': status[1]
+            }
+            self.send(pickle.dumps(response), sender_info)
+        else:
+            try:
+                self.client_ip_list.pop(sender_name)
+            except KeyError:
+                pass  # client is somehow already gone, good riddance
+            response = {
+                'RQ': RQ,
+                'message-type': 'LOGOUT-CONF',
+                'success': True
+            }
+            self.send(pickle.dumps(response), sender_ip)
 
     def receive(self, message):
         sender_info = message[1]
@@ -264,11 +315,12 @@ class UDPReceive(threading.Thread):
 
 if __name__ == '__main__':
     HOST = ''  # Symbolic name meaning all available interfaces
-    PORT = 0  # Arbitrary non-privileged port
+    PORT = 9999  # Arbitrary non-privileged port
     msgQueue = Queue.Queue()
 
     try:
         udpserver = UDPServer(HOST, PORT, msgQueue)
+        # udpserver.offers_broadcast()
     except socket.error:
         sys.exit(1)
 
@@ -283,7 +335,7 @@ if __name__ == '__main__':
                 break
             else:
                 udpserver.receive(msg)
-                print udpserver.client_ip_list
+                # print udpserver.client_ip_list
                 # print "Received message from: " + str(msg[1])
                 # print pickle.loads(msg[0])
                 # print "Sending reply."

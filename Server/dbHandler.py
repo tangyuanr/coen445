@@ -8,9 +8,15 @@ class dbHandler:
         self.CONN = sqlite3.connect('test.db')
         self.CURSOR = self.CONN.cursor()
 
-        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS users(name VARCHAR primary key , IP VARCHAR , socket INTEGER )""")
-        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS offers(ID INTEGER PRIMARY KEY autoincrement , name VARCHAR NOT NULL, description VARCHAR , IP VARCHAR , minimum INTEGER , finished BIT DEFAULT 0, t TIMESTAMP DEFAULT CURRENT_TIMESTAMP, winnername VARCHAR DEFAULT 'NONE', finalprice INTEGER DEFAULT 0)""")
-        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS biddings(ID INTEGER PRIMARY KEY AUTOINCREMENT , itemID INTEGER, biddername VARCHAR, amount INTEGER, t TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS users(name VARCHAR primary key , IP VARCHAR , 
+            socket INTEGER )""")
+        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS offers(ID INTEGER PRIMARY KEY autoincrement , 
+            name VARCHAR NOT NULL, description VARCHAR , ownerIP VARCHAR , itemPort INTEGER DEFAULT 50000, 
+            minimum UNSIGNED INTEGER , 
+            finished BIT DEFAULT 0, timeleft INTEGER DEFAULT 3000, winnername VARCHAR DEFAULT 'NONE', 
+            finalprice INTEGER DEFAULT 0)""")
+        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS biddings(ID INTEGER PRIMARY KEY AUTOINCREMENT , 
+            itemID INTEGER, biddername VARCHAR, amount INTEGER, t TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         # biddings(itemID)=offers(ID), biddings(biddername)=users(name)
         self.CONN.commit()
 
@@ -41,6 +47,10 @@ class dbHandler:
             return False, e.message
         return True
 
+    def get_all_active_offers(self):
+        result = self.CURSOR.execute("""SELECT * FROM offers WHERE finished = 0""").fetchall()
+        return result
+
     def get_user_active_offers(self, name):
         result = self.CURSOR.execute("""SELECT * FROM offers WHERE name = ? AND finished = 0""", (name,)).fetchall()
         return result
@@ -48,6 +58,13 @@ class dbHandler:
     def get_user_active_biddings(self, name):
         result = self.CURSOR.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID WHERE biddings.biddername=?  AND offers.finished=0""", (name,)).fetchall()
         return result
+
+    def user_isactive(self, name):
+        if len(self.get_user_active_offers(name)) != 0:
+            return True, "The auction for your offer(s) is not finished. Please wait until the end or cancel your offer(s)."
+        if len(self.get_user_active_biddings(name)) != 0:
+            return True, "The auction for the item(s) you have placed bids is not finished. Please wait until the end."
+        return False
 
     def deregister(self, name):
         if len(self.get_user_active_offers(name)) != 0:
@@ -85,12 +102,12 @@ class dbHandler:
             # print user_current_offers
             return False, "User %s already has 3 currently active offers" % name
         try:
-            self.CURSOR.execute("""INSERT INTO offers(name, description, IP, minimum) VALUES (?,?,?,?)""", (name, description, ip, minimum))
+            self.CURSOR.execute("""INSERT INTO offers(name, description, ownerIP, minimum) VALUES (?,?,?,?)""", (name, description, ip, minimum))
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
         offer_id = self.CURSOR.execute("""SELECT ID, description, minimum FROM offers WHERE description=? AND name=?""", (description, name)).fetchone()
-        return True, offer_id
+        return True, offer_id, description, minimum
 
     def all_offers(self):
         return self.CURSOR.execute("""SELECT * FROM main.offers""").fetchall()
@@ -98,11 +115,27 @@ class dbHandler:
     def offer_isfinished(self, itemID):
         return self.CURSOR.execute("""SELECT finished FROM offers WHERE ID=?""", (itemID,)).fetchone()[0]
 
-    def get_offer_time(self, itemID):
-        result = self.CURSOR.execute("""SELECT t FROM offers WHERE ID=?""", (itemID,)).fetchone()
+    def get_offer_time_left(self, itemID):
+        result = self.CURSOR.execute("""SELECT timeleft FROM offers WHERE ID=?""", (itemID,)).fetchone()
         if result is None:
             return False, "Offer %s does not exist" % itemID
         return result[0]
+
+    def start_offer(self, itemPort):
+        try:
+            self.CURSOR.execute("""UPDATE offers SET itemPort=?""",(itemPort,))
+            self.CONN.commit()
+        except sqlite3.Error as e:
+            return False, e.message
+        return True
+
+    def update_offer_time_left(self, timeleft):
+        try:
+            self.CURSOR.execute("""UPDATE offers SET timeleft=?""", (timeleft,))
+            self.CONN.commit()
+        except sqlite3.Error as e:
+            return False, e.message
+        return True
 
     def new_bidding(self, itemID, biddername, amount):
         # assume that same user can bid on the same item as many times as he likes
