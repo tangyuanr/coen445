@@ -111,7 +111,7 @@ class UDPServer:
         sender_ip, sender_port = sender_info
         sender_name = data_packet['name']
         RQ = data_packet['RQ']
-        status = self.DBHANDLER.register(sender_name, sender_ip, sender_port)
+        status = self.DBHANDLER.register(sender_name, data_packet['ip'], sender_port)
         if status is not True:
             # Unregister
             reason = status[1]
@@ -153,7 +153,7 @@ class UDPServer:
             }
             self.send(cPickle.dumps(response), sender_info)
         else:
-            status = self.DBHANDLER.update_user_address(sender_name, sender_ip, sender_port)
+            status = self.DBHANDLER.is_registered(sender_name)
             if status is not True:
                 response = {
                     'RQ': RQ,
@@ -211,9 +211,12 @@ class UDPServer:
             if status is not True:
                 print status[1]
 
-    def new_item(self, item_id, description, minimum, ownerdetail):
+    def new_item(self, item_id, description, minimum, ownerdetail, timeleft=None):
         print '******************NEW-ITEM********************'
-        new_bidding_item = Item(item_id, description, minimum, ownerdetail, self.sckt)
+        if timeleft is not None:
+            new_bidding_item = Item(item_id, description, minimum, ownerdetail, self.sckt, timeLeft=timeleft)
+        else:
+            new_bidding_item = Item(item_id, description, minimum, ownerdetail, self.sckt)
         new_bidding_item.start()
         bidding_port = new_bidding_item.server.getSocketAddress()[1]
         # TODO: update offer port after started bidding TCP server
@@ -232,7 +235,7 @@ class UDPServer:
 
     def get_items(self, sender_info, data_packet):  # TODO: select active offers only
         print '*****************GET-ITEMS*******************'
-        items = self.DBHANDLER.all_offers()
+        items = self.DBHANDLER.get_all_active_offers()
         response = {
             'RQ': data_packet['RQ'],
             'success': True,

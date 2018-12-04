@@ -20,6 +20,8 @@ REACTION_LIST = {
     'GET-ITEMS': ['ITEM-LIST'],
     'LOGOUT': ['LOGOUT-DENIED', 'LOGOUT-CONF']
 }
+
+WAIT_REPLY = []
 CURRENT_ACTION = ''
 killFlag = False
 RQ = 0
@@ -51,7 +53,7 @@ def checkStop():
     else:
         s.close()
         print "socket closed"
-        sys.exit(0)
+        sys.exit(1)
         # return True
 
 
@@ -71,9 +73,11 @@ def bid_over_handler(data_packet):
 
 
 def dereg_handler(data_packet):
+    global LOGGED_IN
     if data_packet['success'] is not True:
         app.errorBox('Deregistration failed', data_packet['reason'])
     else:
+        LOGGED_IN = False
         app.stop()
         s.close()
         sys.exit(1)
@@ -86,9 +90,11 @@ def deregister():
         'name': CLIENT_NAME,
         'message-type': 'DEREGISTER'
     }
+    WAIT_REPLY.append((RQ, 'DEREGISTER'))
     s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
-    RQ += 1
+    print '\nRequest:', request
     CURRENT_ACTION = 'DEREGISTER'
+    RQ += 1
 
 
 def server_crash_handling():
@@ -102,6 +108,7 @@ def server_crash_handling():
     reconnected = False
     while countdown > 0:
         try:
+            print countdown
             message = 'CONNECT'
             s.sendto(cPickle.dumps(message), (SERVER_IP, SERVER_PORT))
             # print 'line24'
@@ -115,17 +122,16 @@ def server_crash_handling():
                 # connection reestablished
         except socket.error, msg:
             print msg
-        app.setMessage('Server reconnection',
-                       'Please wait while we try to reconnect to server\n' + str(countdown) + ' seconds left')
+
         time.sleep(2)
         countdown -= 1
 
     if not reconnected:
-        app.setMessage('Server reconnection', 'Connection timeout, cannot reestablish connection to server, exiting.')
+        app.setMessage('', 'Connection timeout, cannot reestablish connection to server, exiting.')
         app.stop()
 
         s.close()
-        sys.exit(0)
+        sys.exit(1)
     else:
         app.setMessage('Server reconnection', 'Connection reestablished.')
         app.destroySubWindow('Connection error handling')
@@ -140,9 +146,11 @@ def get_items():
         'name': CLIENT_NAME
     }
     try:
+        WAIT_REPLY.append((RQ, 'GET-ITEMS'))
         s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
-        RQ += 1
+        print 'Request: ', request
         CURRENT_ACTION = 'GET-ITEMS'
+        RQ += 1
     except socket.error, msg:
         print msg
         app.errorBox('connectionerror', msg)
@@ -185,9 +193,11 @@ def submit_offer():
             'minimum': app.getEntry('Minimum')
         }
         try:
+            WAIT_REPLY.append((RQ, 'OFFER'))
             s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
-            RQ += 1
+            print 'Request: ', request
             CURRENT_ACTION = 'OFFER'
+            RQ += 1
         except socket.error, msg:
             print msg
             app.errorBox('connectionerror', msg)
@@ -225,11 +235,12 @@ def bidding_thread_handler(ID, Owner, Description, IP, BidPort, Minimum, Finishe
 
     count = 0
     while 1:
-        app.setLabel('label' + ID, str(count))
-        app.getLabel('label' + ID)
-
-        count += 1
-        time.sleep(1)
+        print 'thread of' + window_name
+        # app.setLabel('label' + ID, str(count))
+        # app.getLabel('label' + ID)
+        #
+        # count += 1
+        # time.sleep(1)
 
 
 def place_bid(
@@ -260,7 +271,8 @@ def place_bid(
         app.addLabel('label' + str(offer_id), 'Biddings for item ' + str(offer_id))
         print "label " + str(offer_id)
 
-        # TODO: request bidding data from TCP Server and start a table
+        app.addNumericEntry('Bid'+str(offer_id))
+        app.addButton('submit'+str(offer_id), func=None)  # TODO: add submit bid function here
 
         app.stopSubWindow()
         app.showSubWindow(str(offer_id))
@@ -323,7 +335,7 @@ def register_handler(data_packet):
 
 
 def register():
-    global RQ, CURRENT_ACTION
+    global RQ, CURRENT_ACTION, WAIT_REPLY
     name = app.getEntry('Name')
     ip = app.getEntry('Bidding IP')
     if name == '' or ip == '':
@@ -336,9 +348,11 @@ def register():
             'message-type': 'REGISTER'
         }
         try:
+            WAIT_REPLY.append((RQ, 'REGISTER'))
             s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
-            RQ += 1
+            print 'Request: ', request
             CURRENT_ACTION = 'REGISTER'
+            RQ += 1
         except socket.error, msg:
             print msg
             app.errorBox('connectionerror', msg)
@@ -372,9 +386,11 @@ def login():
             'message-type': 'LOGIN'
         }
         try:
+            WAIT_REPLY.append((RQ, 'LOGIN'))
             s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
-            RQ += 1
+            print 'Request: ', request
             CURRENT_ACTION = 'LOGIN'
+            RQ += 1
         except socket.error, msg:
             print msg
             app.errorBox('connectionerror', msg)
@@ -418,31 +434,49 @@ ACTION_LIST = {
 
 def action_dispatcher(data_packet):
     action = data_packet['message-type']
-    print action
+    print 'Received reply:'
+    print action, data_packet
     ACTION_LIST[action](data_packet)
+
+
+def msgHandlerCallback(success):
+    if not success:
+        app.errorBox('','Server connection is corrupted')
+        server_crash_handling()
+        app.stop()
+        s.close()
+        sys.exit(1)
 
 
 # UDP listener
 def msgHandler():
-    global msgQueue, REGISTER_WINDOW_UP
+    global msgQueue, REGISTER_WINDOW_UP, WAIT_REPLY
     print 'HERE AT MSGHANDLER'
     try:
         while 1:
             message = msgQueue.get()
             if message is None:
+                print 'here'
+                # print len(WAIT_REPLY)
+                if len(WAIT_REPLY) != 0:
+                    print 'wait reply list is not empty'
+                    raise socket.error
                 continue
             else:
                 data_packet = cPickle.loads(message[0])
-                app.queueFunction(action_dispatcher, data_packet)
+                if data_packet['message-type'] not in REACTION_LIST[WAIT_REPLY[0]]:
+                    raise socket.error
+                else:
+                    WAIT_REPLY.pop(0)
+                    app.queueFunction(action_dispatcher, data_packet)
     except KeyboardInterrupt:
         print "Keyboard interrupt"
     except socket.error as e:
         print e.message
-        raise
     finally:
         print "client shut down"
-        s.close()
-    sys.exit()
+
+        return False
 
 
 def connect():
@@ -466,7 +500,7 @@ def connect():
 
             # UDP listener starts here
             UDPListener.start()
-            app.thread(msgHandler)
+            app.threadCallback(msgHandler, msgHandlerCallback)
 
             register_window()
 
@@ -550,7 +584,7 @@ if __name__ == '__main__':
         print "Failed to create socket"
         app.errorBox('initiate', 'Failed to create socket')
         app.go()
-        sys.exit()
+        sys.exit(1)
 
 #
 # host = 'localhost'

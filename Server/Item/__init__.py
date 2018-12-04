@@ -5,6 +5,35 @@ from Server.TCPServer import TCPServer
 from Server.dbHandler.dbHandler import dbHandler
 
 
+class RepeatedTimer(object):
+    """
+    from the god sent answer https://stackoverflow.com/a/13151299
+    """
+    def __init__(self, interval, function, *args, **kwargs):
+        self._timer     = None
+        self.interval   = interval
+        self.function   = function
+        self.args       = args
+        self.kwargs     = kwargs
+        self.is_running = False
+        self.start()
+
+    def _run(self):
+        self.is_running = False
+        self.start()
+        self.function(*self.args, **self.kwargs)
+
+    def start(self):
+        if not self.is_running:
+            self._timer = threading.Timer(self.interval, self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):
+        self._timer.cancel()
+        self.is_running = False
+
+
 class Item (threading.Thread):
     """Holds current item values and TCPServer for client connexion"""
 
@@ -33,9 +62,9 @@ class Item (threading.Thread):
                 handler = dbHandler()
                 handler.update_offer_time_left(itemID, self.timeLeft)
                 handler.close()
-                self.timer.start()
+                # self.timer.start()
 
-        self.timer = threading.Timer(30.0, countDown)
+        self.timer = RepeatedTimer(30.0, countDown)
 
     def run(self):
         self.timer.start()

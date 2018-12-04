@@ -48,6 +48,12 @@ class dbHandler:
         result = self.CURSOR.execute("""SELECT * FROM users WHERE IP=?""", (ip,)).fetchall()
         return len(result) != 0
 
+    def user_ip_match(self, name, ip):
+        result = self.CURSOR.execute("""SELECT * FROM users WHERE name=? AND IP=?""", (name, ip)).fetchall()
+        if len(result) == 0:
+            return False, "User is not logged on the specified bidding address"
+        return True
+
     def update_user_address(self, name, ip, sckt):  # TODO test update user ip and port
         try:
             self.CURSOR.execute("""UPDATE users SET IP=?, socket=? WHERE name=?""", (ip, sckt, name))
