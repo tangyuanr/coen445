@@ -11,8 +11,6 @@ from Server.Item import Item
 __MAXSIZE__ = 65535
 
 
-
-
 class UDPServer:
     """docstring for UDPServer."""
 

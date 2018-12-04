@@ -5,7 +5,7 @@ import threading
 import socket
 import sys
 import cPickle
-from Server.dbHandler.dbHandler import dbHandler
+from Server.dbHandler import dbHandler
 from ..Item import Item
 
 __MAXSIZE__ = 65535
