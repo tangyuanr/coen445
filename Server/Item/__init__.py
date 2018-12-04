@@ -15,7 +15,6 @@ class Item (threading.Thread):
         self.highestBidder = owner
         self.recvQueue = Queue.Queue()
         # TODO Instantiate dbHandler on use
-        self.dbHandler = dbHandler()
         self.timeLeft = timeLeft
         self.server = TCPServer.TCPServer()
         self.biddingClosed = threading.Event()
