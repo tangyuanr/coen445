@@ -4,6 +4,8 @@ import Queue
 import threading
 import socket
 import sys
+import pickle
+
 
 __MAXSIZE__ = 1024
 
@@ -16,6 +18,11 @@ class UDPServer:
         self.PORT = PORT
         self.killFlag = threading.Event()
         self.recvQueue = msgQueue
+        self.ACTION_LIST = {
+            'Register': 0,
+            'Deregister': 1,
+            'Offer': 2
+        }
 
         global __MAXSIZE__
         __MAXSIZE__ = MAXSIZE
@@ -24,14 +31,14 @@ class UDPServer:
             self.sckt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sckt.settimeout(0.1)
         except socket.error, msg:
-            print >>sys.stderr, 'Failed to create socket. Error Code : '\
-                  + str(msg[0]) + ' Message ' + msg[1]
+            print >> sys.stderr, 'Failed to create socket. Error Code : ' \
+                                 + str(msg[0]) + ' Message ' + msg[1]
             raise
         try:
             self.sckt.bind((HOST, PORT))
         except socket.error, msg:
-            print >>sys.stderr, 'Bind failed. Error Code : ' + str(msg[0])\
-                                + ' Message ' + msg[1]
+            print >> sys.stderr, 'Bind failed. Error Code : ' + str(msg[0]) \
+                                 + ' Message ' + msg[1]
             raise
 
         self.UDPRcvr = UDPReceive('UDPRcvr', self.killFlag,
@@ -47,8 +54,8 @@ class UDPServer:
             except socket.timeout:
                 maxTries -= 1
             except socket.error, msg:
-                print >>sys.stderr, "Socket connection error. Code: "\
-                                    + str(msg[0]) + "Message: " + msg[1]
+                print >> sys.stderr, "Socket connection error. Code: " \
+                                     + str(msg[0]) + "Message: " + msg[1]
                 raise
         if maxTries <= 0:
             raise socket.error
@@ -59,6 +66,18 @@ class UDPServer:
             self.UDPRcvr.join(1)
 
         self.sckt.close()
+
+    def register(self, sender_info, data_packet):
+        sender_ip, sender_port = sender_info
+        sender_name = data_packet['name']
+
+    def receive(self, message):
+        sender_info = message[1]
+        print "sender info: " + sender_info
+        data_packet = pickle.loads(message[0])
+        print "data packet " + data_packet
+
+
 
 
 class UDPReceive(threading.Thread):
@@ -80,8 +99,8 @@ class UDPReceive(threading.Thread):
             except socket.timeout:
                 pass
             except socket.error, msg:
-                print >>sys.stderr, "Socket connection error. Code: "\
-                                    + str(msg[0]) + "Message: " + msg[1]
+                print >> sys.stderr, "Socket connection error. Code: " \
+                                     + str(msg[0]) + "Message: " + msg[1]
                 raise
             finally:
                 self.recvQueue.put(None)
@@ -91,7 +110,7 @@ class UDPReceive(threading.Thread):
 
 
 if __name__ == '__main__':
-    HOST = ''    # Symbolic name meaning all available interfaces
+    HOST = ''  # Symbolic name meaning all available interfaces
     PORT = 8888  # Arbitrary non-privileged port
     msgQueue = Queue.Queue()
 
@@ -110,7 +129,9 @@ if __name__ == '__main__':
                 udpserver.send(msg[0], msg[1])
                 break
             else:
+                udpserver.receive(msg)
                 print "Received message from: " + str(msg[1])
+                print pickle.loads(msg[0])
                 print "Sending reply."
                 toSend = "You sent: " + msg[0]
                 udpserver.send(toSend, msg[1])
