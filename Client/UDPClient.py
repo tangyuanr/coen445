@@ -8,8 +8,18 @@ import cPickle
 import Queue
 from Server.UDPServer import UDPReceive
 from appJar import gui
+from Bidding import Bidding
 
 MAX_SIZE = 65535
+REACTION_LIST = {
+    'REGISTER': ['UNREGISTER', 'REGISTERED'],
+    'DEREGISTER': ['DEREG-DENIED', 'DEREG-CONF'],
+    'OFFER': ['OFFER-DENIED', 'OFFER-CONF'],
+    'LOGIN': ['LOGIN-FAILED', 'LOGIN-CONF'],
+    'GET-ITEMS': ['ITEM-LIST'],
+    'LOGOUT': ['LOGOUT-DENIED', 'LOGOUT-CONF']
+}
+CURRENT_ACTION = ''
 killFlag = False
 RQ = 0
 SERVER_PORT = 0
@@ -29,19 +39,13 @@ def test_func(btn):
 """UI RELATED FLAGS"""
 REGISTER_WINDOW_UP = False
 
-app = gui()
+app = gui('Main')
 
 
 def checkStop():
     print "UESR IS CLOSING WINDOW"
     if LOGGED_IN:
-        status = deregister()
-        if status is not True:
-            return False
-        s.close()
-        print "socket closed"
-        sys.exit()
-        # return status
+        deregister()
     else:
         s.close()
         print "socket closed"
@@ -53,8 +57,28 @@ app.topLevel.protocol('WM_DELETE_WINDOW', checkStop)
 app.setStopFunction(checkStop)
 
 
+def bid_over_handler(data_packet):
+    if data_packet['message-type'] == 'NOT SOLD':
+        app.infoBox('Item ' + data_packet['item-id'] + ' not sold', data_packet['reason'])
+    else:
+        app.infoBox('Item ' + data_packet['item-id'] + ' sold',
+                    'Your item has been sold!\nWinner: ' + data_packet['name'] +
+                    '\nWinner IP: ' + data_packet['winnerIP'] +
+                    '\nWinner port: ' + str(data_packet['winnerPort']) +
+                    '\nFinal price: ' + str(data_packet['amount']))
+
+
+def dereg_handler(data_packet):
+    if data_packet['success'] is not True:
+        app.errorBox('Deregistration failed', data_packet['reason'])
+    else:
+        app.stop()
+        s.close()
+        sys.exit()
+
+
 def deregister():
-    global RQ
+    global RQ, CURRENT_ACTION
     request = {
         'RQ': RQ,
         'name': CLIENT_NAME,
@@ -63,14 +87,7 @@ def deregister():
     try:
         s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
         RQ += 1
-        d = s.recvfrom(MAX_SIZE)
-        reply = cPickle.loads(d[0])
-        print reply
-        if not reply['success']:
-            app.errorBox('connectionerror', reply['reason'])
-            return False, reply['reason']
-        else:
-            return True
+        CURRENT_ACTION = 'DEREGISTER'
     except socket.error, msg:
         print msg
         app.errorBox('connectionerror', msg)
@@ -119,7 +136,7 @@ def server_crash_handling():
 
 
 def get_items():
-    global RQ
+    global RQ, CURRENT_ACTION
     request = {
         'RQ': RQ,
         'message-type': 'GET-ITEMS',
@@ -128,6 +145,7 @@ def get_items():
     try:
         s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
         RQ += 1
+        CURRENT_ACTION = 'GET-ITEMS'
     except socket.error, msg:
         print msg
         app.errorBox('connectionerror', msg)
@@ -156,7 +174,7 @@ def offer_response_handler(data_packet):
 
 
 def submit_offer():
-    global RQ
+    global RQ, CURRENT_ACTION
     description = app.getEntry('Description')
     minimum = app.getEntry('Minimum')
     if description == '' or minimum < 1:
@@ -172,6 +190,7 @@ def submit_offer():
         try:
             s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
+            CURRENT_ACTION = 'OFFER'
         except socket.error, msg:
             print msg
             app.errorBox('connectionerror', msg)
@@ -180,7 +199,7 @@ def submit_offer():
 
 def make_offer():
     pass
-    app.startSubWindow('New offer window')
+    app.startSubWindow('New offer window', stopfunc=bidding_stop_func)
     app.addLabel('l2', 'Description: ', row=0, column=0)
     app.addEntry('Description', row=0, column=1)
     app.addLabel('l3', 'Minimum amount: ', row=1, column=0)
@@ -195,13 +214,25 @@ def bidding_stop_func(win):
     app.destroySubWindow(win)
 
 
+def bidding_thread_handler(offerid):
+    window_name = 'Bidding window ' + str(offerid)
+    while 1:
+        print 'inside bidding thread' + offerid
+
+
 def place_bid(
         rowNumber):  # TODO: patch client to TCP bidding, also make sure the UDPServer sets each new offer with valid TCP port
     offer_info = app.getTableRow('Offers table ' + CLIENT_NAME, rowNumber)
     print offer_info
+
+    # new_bidding = Bidding(offer_info, CLIENT_NAME, CLIENT_IP)
+    # new_bidding.start()
+
     offer_id = offer_info[0]
-    app.startSubWindow('Bidding window ' + str(offer_id), stopfunc=bidding_stop_func)
-    app.addLabel('lable'+str(offer_id), 'Biddings for item ' + str(offer_id))
+
+    window_name = 'Bidding window ' + str(offer_id)
+    app.startSubWindow(window_name, stopfunc=bidding_stop_func, threadfunc=bidding_thread_handler, threadArgs=offer_id)
+    app.addLabel('lable' + str(offer_id), 'Biddings for item ' + str(offer_id))
 
     # TODO: request bidding data from TCP Server and start a table
 
@@ -266,7 +297,7 @@ def register_handler(data_packet):
 
 
 def register():
-    global RQ
+    global RQ, CURRENT_ACTION
     name = app.getEntry('Name')
     ip = app.getEntry('Bidding IP')
     if name == '' or ip == '':
@@ -281,6 +312,7 @@ def register():
         try:
             s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
+            CURRENT_ACTION = 'REGISTER'
         except socket.error, msg:
             print msg
             app.errorBox('connectionerror', msg)
@@ -301,7 +333,7 @@ def login_success_handler(data_packet):
 
 
 def login():
-    global RQ
+    global RQ, CURRENT_ACTION
     name = app.getEntry('Name')
     ip = app.getEntry('Bidding IP')
     if name == '' or ip == '':
@@ -316,6 +348,7 @@ def login():
         try:
             s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
+            CURRENT_ACTION = 'LOGIN'
         except socket.error, msg:
             print msg
             app.errorBox('connectionerror', msg)
@@ -344,19 +377,22 @@ ACTION_LIST = {
     'REGISTERED': register_handler,
     'LOGIN-FAILED': login_failed_handler,
     'LOGIN-CONF': login_success_handler,
-    'DEREG-DENIED': 0,
-    'DEREG-CONF': 0,
+    'DEREG-DENIED': dereg_handler,
+    'DEREG-CONF': dereg_handler,
     'NEW-ITEM': new_item_handler,
     'ITEM-LIST': refresh_offers_list,
     'OFFER-DENIED': offer_response_handler,
     'OFFER-CONF': offer_response_handler,
     'LOGOUT-DENIED': 0,
-    'LOGOUT-CONF': 0
+    'LOGOUT-CONF': 0,
+    'SOLD-TO': 0,
+    'NOT-SOLD': 0
 }
 
 
 def action_dispatcher(data_packet):
     action = data_packet['message-type']
+    print action
     ACTION_LIST[action](data_packet)
 
 
