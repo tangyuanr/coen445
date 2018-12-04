@@ -1,56 +1,103 @@
 import Queue
 import threading
-from ..TCPServer import TCPServer
+import cPickle
+from Server.TCPServer import TCPServer
+from Server.dbHandler import dbHandler
 
 
 class Item (threading.Thread):
     """Holds current item values and TCPServer for client connexion"""
 
     def __init__(self, itemID, name, minimumBid,
-                 owner, timeLeft=300, port=0):
+                 owner, socket, timeLeft=300, port=0):
         self.itemID = itemID
         self.name = name
         self.highestBid = minimumBid
         self.owner = owner
-        self.highestBidder = owner
-        self.recvQueue = Queue.Queue()
-        # TODO Instantiate dbHandler on use
-        self.dbHandler = dbHandler()
+        self.highestBidder = None
+        self.udpSocket = socket
         self.timeLeft = timeLeft
+        self.recvQueue = Queue.Queue()
         self.server = TCPServer.TCPServer()
         self.biddingClosed = threading.Event()
+        handler = dbHandler()
+        handler.update_offer_port(itemID, self.server.getSocketAddress()[1])
+        handler.close()
 
         def countDown():
             self.timeLeft -= 30
-            if self.timLeft <= 0:
+            if self.timeLeft <= 0:
                 self.closeBidding()
             else:
+                handler = dbHandler()
+                handler.update_offer_time_left(itemID, timeLeft)
+                handler.close()
                 self.timer.start()
+
         self.timer = threading.Timer(30.0, countDown)
 
     def run(self):
         self.timer.start()
         while not self.biddingClosed.isSet():
+            handler = dbHandler()
             msg = self.recvQueue.get()
             if msg is not None:
                 # TODO: check if IP address is registered in DB
-                bid = msg[1]
+                bid = msg[2]
                 if bid is not None:
-                    itemID = bid[1]["Item"]
+                    itemID = bid["Item"]
                     if itemID == self.itemID:
-                        amount = bid[1]["Val"]
+                        amount = bid["Val"]
                         if amount > self.highestBid:
                             self.highestBid = amount
-                            self.highestBidder = bid[0]
-                            # TODO: send highest to all
+                            self.highestBidder = bid[0:1]
+                            handler.new_bidding(itemID, )
+                            highestMSG = {
+                                "ID": itemID,
+                                "Amt": amount
+                            }
+                            self.server.sendall(cPickle.dumps(highestMSG))
 
     def closeBidding(self):
         self.biddingClosed.set()
-        # TODO: if winner, send win message to winner
-        # TODO: send bid-over message to all
-        # TODO: send owner sold-to or not-sold message
+        handler = dbHandler()
+        handler.close_bidding(self.itemID)
+        if self.highestBidder is not None:
+            win = {
+                "T": "WIN",
+                "ID": self.itemID,
+                "NM": self.owner[1],
+                "IP": self.owner[1][0],
+                "PRT": self.owner[1][1],
+                "AMT": self.minimumBid
+            }
+            self.highestBidder[0].send(cPickle.dumps(win, -1))
+            soldto = {
+                "message-type": "soldto",
+                "id": self.itemID,
+                "name": self.highestBidder[1][0],
+                "ip": self.highestBidder[1][1],
+                "port": self.highestBidder[0].getRemoteAddress()[1],
+                "amount": self.minimumBid
+            }
+            self.udpSocket.send(cPickle.dumps(soldto, -1), self.owner[1])
+        else:
+            notsold = {
+                "message-type": "notsold",
+                "id": self.itemID,
+                "reason": "No valid bids"
+            }
+            self.udpSocket.send(cPickle.dumps(notsold, -1), self.owner[1])
+
+        bidover = {
+            "T": "BOV",
+            "ID": self.itemID,
+            "AMT": self.minimumBid
+        }
+
+        self.TCPServer.sendall(cPickle.dumps(bidover, -1))
         self.recvQueue.put(None)
-        self.TCPServer.shutdown()
+        self.server.shutdown()
 
 
 if __name__ == '__main__':
