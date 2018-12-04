@@ -38,20 +38,22 @@ class Item (threading.Thread):
     """Holds current item values and TCPServer for client connexion"""
 
     def __init__(self, itemID, name, minimumBid,
-                 owner, socket, timeLeft=300, port=0):
+                 owner, socket, highestBidder=None, timeLeft=300, port=0):
         super(Item, self).__init__()
         self.itemID = itemID
         self.name = name
         self.highestBid = minimumBid
         self.owner = owner
-        self.highestBidder = None
         self.udpSocket = socket
         self.timeLeft = timeLeft
         self.recvQueue = Queue.Queue()
         self.server = TCPServer(self.recvQueue)
         self.biddingClosed = threading.Event()
+        self.highestBidder = None
         handler = dbHandler()
         handler.update_offer_port(itemID, self.server.getSocketAddress()[1])
+        if highestBidder is not None:
+            self.highestBidder = handler.get_user_info(highestBidder)
         handler.close()
 
         def countDown():
@@ -63,6 +65,15 @@ class Item (threading.Thread):
                 handler.update_offer_time_left(itemID, self.timeLeft)
                 handler.close()
                 # self.timer.start()
+            if not self.biddingClosed.set():
+                self.timeLeft -= 30
+                if self.timeLeft <= 0:
+                    self.closeBidding()
+                else:
+                    handler = dbHandler()
+                    handler.update_offer_time_left(itemID, self.timeLeft)
+                    handler.close()
+                    self.timer.start()
 
         self.timer = RepeatedTimer(30.0, countDown)
 
@@ -72,7 +83,7 @@ class Item (threading.Thread):
             handler = dbHandler()
             msg = self.recvQueue.get()
             if msg is not None:
-                # TODO: check if IP address is registered in DB
+
                 bid = msg[2]
                 if bid is not None:
                     itemID = bid["Item"]
@@ -80,13 +91,14 @@ class Item (threading.Thread):
                         amount = bid["Val"]
                         if amount > self.highestBid:
                             self.highestBid = amount
-                            self.highestBidder = bid[0:1]
+                            self.highestBidder = msg[1]
                             handler.new_bidding(itemID, )
                             highestMSG = {
+                                "T": "HI",
                                 "ID": itemID,
-                                "Amt": amount
+                                "AMT": amount
                             }
-                            self.server.sendall(cPickle.dumps(highestMSG))
+                            self.server.sendall(cPickle.dumps(highestMSG, -1))
 
     def closeBidding(self):
         self.biddingClosed.set()

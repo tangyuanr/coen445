@@ -225,22 +225,40 @@ def bidding_stop_func(win):
     CURRENT_BIDS.remove(int(win) - 1)
 
 
-def bidding_thread_handler(ID, Owner, Description, IP, BidPort, Minimum, Finished, Timeleft, Winner, Highest):
+def bidding_thread_handler(self, ID, Owner, Description, IP, BidPort, Minimum, Finished, TimeLeft, Winner, Highest):
     window_name = str(ID)
     print window_name
-    print ID, Owner, Description, IP, BidPort, Minimum, Finished, Timeleft, Winner, Highest
-    # bidding_queue = Queue.Queue()
-    # bidding_tcp_client = TCPClient(bidding_queue, '', 0)
-    # bidding_tcp_client.start()
+    print ID, BidPort, Minimum
+    bidding_queue = Queue.Queue()
+    bidding_tcp_client = TCPClient(self.bidding_queue, SERVER_IP, BidPort)
+    bidding_tcp_client.start()
+    curHighest = Highest
+    biddingClosed = False
+    wonBid = False
 
-    count = 0
-    while 1:
-        print 'thread of' + window_name
-        # app.setLabel('label' + ID, str(count))
-        # app.getLabel('label' + ID)
-        #
-        # count += 1
-        # time.sleep(1)
+    while not biddingClosed:
+        app.setLabel('label' + ID, str(Minimum))
+        app.getLabel('label' + ID)
+        msg = bidding_queue.get()
+        if msg["ID"] == ID:
+            if msg["T"] == "HI":
+                curHighest = msg["AMT"]
+            elif msg["T"] == "WIN":
+                app.infoBox(title="You won!",
+                            message="Item #"+msg["ID"]+", '"+Description
+                            +"' is now yours!\n"+"It will cost you "+msg["AMT"]
+                            +"$, that you can send to "+msg["NM"]+" at:\n"
+                            + msg["IP"]+", "+msg["PRT"],
+                            parent="Offers window "+CLIENT_NAME)
+                wonBid = True
+            elif msg["T"] == "BOV":
+                if not wonBid:
+                    app.infoBox(title="Bidding over!",
+                                message="Item #"+msg["ID"]+" was sold at a price of "+msg["AMT"]+"$.",
+                                parent="Offers window "+CLIENT_NAME)
+                biddingClosed = True
+    bidding_tcp_client.disconnect()
+    bidding_stop_func(str(ID))
 
 
 def place_bid(

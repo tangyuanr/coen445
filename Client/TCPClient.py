@@ -11,13 +11,14 @@ class TCPClient (threading.Thread):
         super(TCPClient, self).__init__()
         self.HOST = HOST
         self.PORT = PORT
+        address = (HOST, PORT)
         self.recvQueue = msgQueue
         self.killFlag = threading.Event()
         self.sckt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sckt.connect(HOST, PORT)
+        self.sckt.connect(address)
 
     def getSocketAddress(self):
-        return self.serverSckt.getsockname()
+        return self.sckt.getsockname()
 
     def run(self):
         print "Connection established with " + str(self.getRemoteAddress())
