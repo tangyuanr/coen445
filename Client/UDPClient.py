@@ -4,8 +4,9 @@ import socket  # for sockets
 import sys  # for exit
 import time
 import threading
-import pickle
+import cPickle
 import Queue
+from Server.UDPServer import UDPReceive
 from appJar import gui
 
 MAX_SIZE = 65535
@@ -14,8 +15,20 @@ RQ = 0
 SERVER_PORT = 0
 SERVER_IP = ''
 CLIENT_NAME = ''
+CLIENT_IP = ''
+CLIENT_PORT = 0
 LOGGED_IN = False
-msgQueue = Queue.Queue()
+TEST = 0
+
+
+def test_func(btn):
+    print btn
+    app.setLabel('TESTING', str(TEST))
+
+
+"""UI RELATED FLAGS"""
+REGISTER_WINDOW_UP = False
+
 
 app = gui()
 
@@ -52,10 +65,10 @@ def deregister():
         'message-type': 'DEREGISTER'
     }
     try:
-        s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+        s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
         RQ += 1
         d = s.recvfrom(MAX_SIZE)
-        reply = pickle.loads(d[0])
+        reply = cPickle.loads(d[0])
         print reply
         if not reply['success']:
             app.errorBox('connectionerror', reply['reason'])
@@ -80,7 +93,7 @@ def server_crash_handling():
     while countdown > 0:
         try:
             message = 'CONNECT'
-            s.sendto(pickle.dumps(message), (SERVER_IP, SERVER_PORT))
+            s.sendto(cPickle.dumps(message), (SERVER_IP, SERVER_PORT))
             # print 'line24'
             d = s.recvfrom(MAX_SIZE)
             reply = d[0]
@@ -117,7 +130,7 @@ def get_items():
         'name': CLIENT_NAME
     }
     try:
-        s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+        s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
         RQ += 1
     except socket.error, msg:
         print msg
@@ -161,7 +174,7 @@ def submit_offer():
             'minimum': app.getEntry('Minimum')
         }
         try:
-            s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+            s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
         except socket.error, msg:
             print msg
@@ -259,7 +272,7 @@ def register():
             'message-type': 'REGISTER'
         }
         try:
-            s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+            s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
         except socket.error, msg:
             print msg
@@ -293,7 +306,7 @@ def login():
             'message-type': 'LOGIN'
         }
         try:
-            s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+            s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
         except socket.error, msg:
             print msg
@@ -302,22 +315,19 @@ def login():
 
 
 def register_window():
-    app.destroySubWindow('Initiation window')  # cleanse window
+    app.hideSubWindow('Initiation window')  # cleanse window
 
-    app.startSubWindow('Register login window')
-    app.addLabel('instruction', text='Please log in or register with your unique name id and server port')
-    app.addLabelEntry('Bidding IP')
-    app.addLabelEntry('Name')
-    app.addButton('Register', row=3, column=0, func=register)
-    app.addButton('Login', row=3, column=1, func=login)
-    app.stopSubWindow()
+    # app.startSubWindow('Register login window')
+    # app.addLabel('instruction', text='Please log in or register with your unique name id and server port')
+    # app.addLabelEntry('Bidding IP')
+    # app.addLabelEntry('Name')
+    # app.addButton('Register', row=3, column=0, func=register)
+    # app.addButton('Login', row=3, column=1, func=login)
+    # app.stopSubWindow()
 
     # app.show()
     app.showSubWindow('Register login window')
     print 'here'
-
-    # UDP listener starts here
-    msgHandler()
 
 
 ACTION_LIST = {
@@ -337,20 +347,26 @@ ACTION_LIST = {
 }
 
 
+def action_dispatcher(data_packet):
+    action = data_packet['message-type']
+    ACTION_LIST[action](data_packet)
+
 # UDP listener
 def msgHandler():
-    global msgQueue
+    global msgQueue, REGISTER_WINDOW_UP
+    print 'HERE AT MSGHANDLER'
     try:
         while 1:
             message = msgQueue.get()
             if message is None:
                 continue
             else:
-                data_packet = pickle.loads(message[0])
-                ACTION_LIST[data_packet['message-type']](data_packet)
+                data_packet = cPickle.loads(message[0])
+                app.queueFunction(action_dispatcher, data_packet)
     except KeyboardInterrupt:
         print "Keyboard interrupt"
-    except socket.error:
+    except socket.error as e:
+        print e.message
         raise
     finally:
         print "client shut down"
@@ -365,21 +381,23 @@ def connect():
     try:
         host = ip
         message = 'CONNECT'
-        s.sendto(pickle.dumps(message), (host, port))
+        s.sendto(cPickle.dumps(message), (host, port))
         # print 'line24'
-        d = s.recvfrom(MAX_SIZE)
-        reply = d[0]
-        addr = d[1]
+        # d = s.recvfrom(MAX_SIZE)
+        # reply = d[0]
+        # addr = d[1]
+        reply = msgQueue.get()[0]
         print reply
         if reply == 'OK':
-            global SERVER_PORT, SERVER_IP, msgQueue
+            global SERVER_PORT, SERVER_IP
             SERVER_PORT = port
             SERVER_IP = ip
 
-            UDPListener = UDPReceive(s, msgQueue)
-            UDPListener.start()
+            # UDP listener starts here
+            app.thread(msgHandler)
 
             register_window()
+
         else:
             app.errorBox('error', 'Connection to server cannot be established')
     except socket.error, msg:
@@ -388,11 +406,12 @@ def connect():
         server_crash_handling()
 
 
-def initiate():
-    initiation_complete = 'Initiation complete, your address: ' + s.getsockname()[0] + ', ' + str(s.getsockname()[1])
+def initiate(ip, port):
+    initiation_complete = 'Initiation complete, your address: ' + ip + ', ' + str(port[1])
     print initiation_complete
 
-    app.startSubWindow('Initiation window', stopfunc=checkStop)
+    # app.startSubWindow('Initiation window', stopfunc=checkStop)
+    app.startSubWindow('Initiation window')
 
     app.addLabel('initiate', text=initiation_complete)
     """Try to connect to UDP server"""
@@ -405,35 +424,52 @@ def initiate():
     app.addButton('server_connect', connect)
     app.stopSubWindow()
 
+    app.startSubWindow('Register login window')
+    app.addLabel('instruction', text='Please log in or register with your unique name id and server port')
+    app.addLabelEntry('Bidding IP')
+    app.addLabelEntry('Name')
+    app.addButton('Register', row=3, column=0, func=register)
+    app.addButton('Login', row=3, column=1, func=login)
+    app.stopSubWindow()
+    # app.showSubWindow('Register login window')
+
     app.go(startWindow='Initiation window')
 
 
-class UDPReceive(threading.Thread):
-    """Copied UDPServer's UDPReceive function"""
-
-    def __init__(self, sckt, rcvQ):
-        super(UDPReceive, self).__init__()
-        self.socket = sckt
-        self.receiveQueue = rcvQ
-
-    def run(self):
-        while 1:
-            try:
-                data = self.socket.recvfrom(MAX_SIZE)
-                self.receiveQueue.put(data)
-            except socket.timeout:
-                pass
-            except socket.error, msg:
-                print msg
-            finally:
-                break
+# class UDPReceive(threading.Thread):
+#     """Copied UDPServer's UDPReceive function"""
+#
+#     def __init__(self, sckt, rcvQ):
+#         super(UDPReceive, self).__init__()
+#         self.socket = sckt
+#         self.receiveQueue = rcvQ
+#
+#     def run(self):
+#         while 1:
+#             try:
+#                 data = self.socket.recvfrom(MAX_SIZE)
+#                 self.receiveQueue.put(data)
+#             except socket.timeout:
+#                 pass
+#             except socket.error, msg:
+#                 print msg
+#             finally:
+#                 break
 
 
 if __name__ == '__main__':
+    client_ip = ''
+    client_port = 0
+    msgQueue = Queue.Queue()
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.bind(('', 0))
-        initiate()
+        client_ip = socket.gethostbyname(socket.gethostname())
+        client_port = socket.socket.getsockname(s)
+        UDPListener = UDPReceive('Client UDP', threading.Event(), s, msgQueue)
+        UDPListener.start()
+
+        initiate(client_ip, client_port)
     except socket.error:
         print "Failed to create socket"
         app.errorBox('initiate', 'Failed to create socket')
@@ -454,9 +490,9 @@ if __name__ == '__main__':
 #             'name': name,
 #             'RQ': RQ
 #         }
-#         s.sendto(pickle.dumps(message), (host, port))
+#         s.sendto(cPickle.dumps(message), (host, port))
 #         d = s.recvfrom(MAX_SIZE)
-#         reply = pickle.loads(d[0])
+#         reply = cPickle.loads(d[0])
 #         addr = d[1]
 #         if reply == 'Bye!':
 #             killFlag = True

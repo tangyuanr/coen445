@@ -4,17 +4,19 @@ import Queue
 import threading
 import socket
 import sys
-import pickle
-from dbHandler import dbHandler
-from TCPServer import TCPServer
+import cPickle
+from Server.dbHandler.dbHandler import dbHandler
+from Server.Item import Item
 
 __MAXSIZE__ = 65535
+
+
 
 
 class UDPServer:
     """docstring for UDPServer."""
 
-    def __init__(self, HOST, PORT, msgQueue, MAXSIZE=1024):
+    def __init__(self, HOST, PORT, msgQueue, MAXSIZE=__MAXSIZE__):
         self.HOST = HOST
         self.PORT = PORT
         self.killFlag = threading.Event()
@@ -81,7 +83,7 @@ class UDPServer:
                 }
                 for client in self.client_ip_list:
                     print client, response
-                    self.send(pickle.dumps(response), self.client_ip_list[client])
+                    self.send(cPickle.dumps(response), self.client_ip_list[client])
 
     def send(self, message, dest):
         maxTries = 3
@@ -121,7 +123,7 @@ class UDPServer:
                 'message-type': 'UNREGISTER',
                 'reason': reason
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
 
         else:
             # Registered
@@ -134,7 +136,7 @@ class UDPServer:
                 'ip': sender_ip,
                 'port': sender_port
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
             self.client_ip_list[sender_name] = sender_info
 
     def login(self, sender_info, data_packet):
@@ -149,7 +151,7 @@ class UDPServer:
                 'message-type': 'LOGIN-FAILED',
                 'reason': 'User not registered'
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
         else:
             status = self.DBHANDLER.update_user_address(sender_name, sender_ip, sender_port)
             if status is not True:
@@ -159,7 +161,7 @@ class UDPServer:
                     'message-type': 'LOGIN-FAILED',
                     'reason': status[1]
                 }
-                self.send(pickle.dumps(response), sender_info)
+                self.send(cPickle.dumps(response), sender_info)
             else:
                 response = {
                     'RQ': RQ,
@@ -167,7 +169,7 @@ class UDPServer:
                     'message-type': 'LOGIN-CONF',
                     'name': sender_name
                 }
-                self.send(pickle.dumps(response), sender_info)
+                self.send(cPickle.dumps(response), sender_info)
                 self.client_ip_list[sender_name] = sender_info
 
     def deregister(self, sender_info, data_packet):
@@ -184,37 +186,44 @@ class UDPServer:
                 'message-type': 'DEREG-DENIED',
                 'reason': status[1]
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
         else:
             response = {
                 'RQ': RQ,
                 'success': True,
                 'message-type': 'DEREG-CONF'
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
 
     def update_offer_port_after_restart(self, offers):
         for offer in offers:
-            # TODO: restart TCP server for each
-            port = 0  # TODO: returns TCP server port number
+            owner_name = offer[1]
+            owner_ip = offer[3]
+            owner_port = self.DBHANDLER.get_user_info(owner_name)[2]
+            if owner_port is None:
+                print "Owner of the offer " + offer[0] + " is no longer registered"
+                continue
+            port = self.new_item(offer[0], offer[2], offer[5], (owner_name, (owner_ip, owner_port)))
+
             status = self.DBHANDLER.update_offer_port(offer[0], port)
             if status is not True:
                 print status[1]
 
-    def new_item(self, item_id, description, minimum):
-        message_type = {}  # todo: ???what's message type?
-        tcp_server = TCPServer('', 0, Queue.Queue(), message_type)
-        port = tcp_server.getSocketAddress()
+    def new_item(self, item_id, description, minimum, ownerdetail):
+        new_bidding_item = Item(item_id, description, minimum, ownerdetail, self.sckt)
+        new_bidding_item.start()
+        bidding_port = new_bidding_item.server.getSocketAddress()[1]
         response = {
             'message-type': 'NEW-ITEM',
             'item-id': item_id,
             'description': description,
             'minimum': minimum,
-            'port': port
+            'port': bidding_port
         }
 
         for client in self.client_ip_list:
-            self.send(pickle.dumps(response), self.client_ip_list[client])
+            self.send(cPickle.dumps(response), self.client_ip_list[client])
+        return bidding_port
 
     def get_items(self, sender_info, data_packet):  # TODO: select active offers only
         items = self.DBHANDLER.all_offers()
@@ -224,7 +233,7 @@ class UDPServer:
             'message-type': 'ITEM-LIST',
             'items': items
         }
-        self.send(pickle.dumps(response), sender_info)
+        self.send(cPickle.dumps(response), sender_info)
 
     def offer(self, sender_info, data_packet):
         print "********************OFFER**********************"
@@ -243,7 +252,7 @@ class UDPServer:
                 'message-type': 'OFFER-DENIED',
                 'reason': status[1]
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
         else:
             response = {
                 'RQ': RQ,
@@ -253,8 +262,8 @@ class UDPServer:
                 'description': status[2],
                 'minimum': status[3]
             }
-            self.send(pickle.dumps(response), sender_info)
-            self.new_item(status[0], status[1], status[2])
+            self.send(cPickle.dumps(response), sender_info)
+            self.new_item(status[0], status[1], status[2], (sender_name, sender_info))
 
     def logout(self, sender_info, data_packet):
         print "****************LOGOUT****************"
@@ -269,7 +278,7 @@ class UDPServer:
                 'message-type': 'LOGOUT-DENIED',
                 'reason': status[1]
             }
-            self.send(pickle.dumps(response), sender_info)
+            self.send(cPickle.dumps(response), sender_info)
         else:
             try:
                 self.client_ip_list.pop(sender_name)
@@ -280,12 +289,12 @@ class UDPServer:
                 'message-type': 'LOGOUT-CONF',
                 'success': True
             }
-            self.send(pickle.dumps(response), sender_ip)
+            self.send(cPickle.dumps(response), sender_ip)
 
     def receive(self, message):
         sender_info = message[1]
         print "sender info: ", sender_info
-        data_packet = pickle.loads(message[0])
+        data_packet = cPickle.loads(message[0])
         print "data packet ", data_packet
 
         if data_packet == 'CONNECT':
@@ -334,7 +343,7 @@ if __name__ == '__main__':
 
     try:
         udpserver = UDPServer(HOST, PORT, msgQueue)
-        udpserver.offers_broadcast()
+        # udpserver.offers_broadcast()
     except socket.error:
         sys.exit(1)
 
@@ -351,7 +360,7 @@ if __name__ == '__main__':
                 udpserver.receive(msg)
                 # print udpserver.client_ip_list
                 # print "Received message from: " + str(msg[1])
-                # print pickle.loads(msg[0])
+                # print cPickle.loads(msg[0])
                 # print "Sending reply."
                 # toSend = "You sent: " + msg[0]
                 # udpserver.send(toSend, msg[1])

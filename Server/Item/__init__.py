@@ -1,15 +1,19 @@
 import Queue
 import threading
 from ..TCPServer import TCPServer
+from ..dbHandler.dbHandler import dbHandler
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.pardir))
 
 
 class Item (threading.Thread):
     """Holds current item values and TCPServer for client connexion"""
 
-    def __init__(self, itemID, name, minimumBid,
-                 owner, timeLeft=300, port=0):
+    def __init__(self, itemID, name, minimumBid, owner, timeLeft=300, port=0):
+        super(Item, self).__init__()
         self.itemID = itemID
-        self.name = name
+        self.name = name  # description
         self.highestBid = minimumBid
         self.owner = owner
         self.highestBidder = owner
@@ -17,12 +21,12 @@ class Item (threading.Thread):
         # TODO Instantiate dbHandler on use
         self.dbHandler = dbHandler()
         self.timeLeft = timeLeft
-        self.server = TCPServer.TCPServer()
+        self.server = TCPServer(self.recvQueue, PORT=port)
         self.biddingClosed = threading.Event()
 
         def countDown():
             self.timeLeft -= 30
-            if self.timLeft <= 0:
+            if self.timeLeft <= 0:
                 self.closeBidding()
             else:
                 self.timer.start()
@@ -50,7 +54,7 @@ class Item (threading.Thread):
         # TODO: send bid-over message to all
         # TODO: send owner sold-to or not-sold message
         self.recvQueue.put(None)
-        self.TCPServer.shutdown()
+        self.server.shutdown()
 
 
 if __name__ == '__main__':
@@ -61,7 +65,7 @@ if __name__ == '__main__':
     PORT = 8888
     item = Item(itemID, name, minimumBid, HOST, PORT)
     itemThread = item.start()
-    print "Connection open on " + str(item.TCPServer.getSocketAddress())
+    print "Connection open on " + str(item.server.getSocketAddress())
 
     try:
         while True:

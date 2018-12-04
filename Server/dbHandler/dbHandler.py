@@ -163,7 +163,7 @@ class dbHandler:
         if winner[0] is False:
             return winner
         try:
-            self.CURSOR.execute("""UPDATE offers SET finished=1, winnername=?, finalprice=? WHERE ID=?""", (winner[0], winner[1], itemID))
+            self.CURSOR.execute("""UPDATE offers SET finished=1 WHERE ID=?""", (itemID,))
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
@@ -183,7 +183,7 @@ if __name__ == "__main__":
     print handler.new_offer('nobody', 'vase', '1234679', 2)
     print handler.new_offer('nobody', 'number 4 vase', '1234679', 2)
     print handler.all_offers()
-    print handler.offer_isfinished(2)
+    # print handler.offer_isfinished(2)
     # print handler.get_offer_time(2)
 
     print handler.new_bidding(3, 'nobody', 6)
@@ -200,4 +200,6 @@ if __name__ == "__main__":
     # cur = handler.get_cursor()
     # cur.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID""", ("nobody", )).fetchall()
     print handler.all_offers()
+    print "HERE"
+    print handler.get_user_info_from_ip('123156')
     handler.close()

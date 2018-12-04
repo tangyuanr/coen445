@@ -34,8 +34,7 @@ class TCPServer:
             raise
 
         self.TCPLstnr = TCPLstnr('Listener', self.serverSckt,
-                                 self.recvQueue, self.connections,
-                                 self.msgTypes)
+                                 self.recvQueue, self.connections)
         self.TCPLstnr.start()
 
     def sendall(self, msg):
@@ -79,7 +78,7 @@ class TCPLstnr(threading.Thread):
                 print "New connection from " + str(address)
                 # TODO: check if IP is in database
                 connection = TCPCnxn(str(address), clientSckt,
-                                     self.recvQueue, self.msgTypes)
+                                     self.recvQueue)
                 connection.start()
                 self.connections.append(connection)
             except socket.error:
