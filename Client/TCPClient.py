@@ -18,7 +18,7 @@ class TCPClient (threading.Thread):
         self.sckt.connect(address)
 
     def getSocketAddress(self):
-        return self.serverSckt.getsockname()
+        return self.sckt.getsockname()
 
     def run(self):
         print "Connection established with " + str(self.getRemoteAddress())
