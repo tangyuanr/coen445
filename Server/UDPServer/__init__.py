@@ -78,8 +78,6 @@ class UDPServer:
         print "data packet " + data_packet
 
 
-
-
 class UDPReceive(threading.Thread):
     """Waits for UDP reception and puts items in the recvQueue
     then notifies condition 1"""

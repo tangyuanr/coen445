@@ -3,6 +3,7 @@ import Queue
 import threading
 import sys
 import cPickle
+from Server.dbHandler import dbHandler
 
 __MAXSIZE__ = 1024
 
@@ -77,11 +78,18 @@ class TCPLstnr(threading.Thread):
                 self.serverSckt.listen(5)
                 clientSckt, address = self.serverSckt.accept()
                 print "New connection from " + str(address)
-                # TODO: check if IP is in database
-                connection = TCPCnxn(str(address), clientSckt,
-                                     self.recvQueue, self.msgTypes)
-                connection.start()
-                self.connections.append(connection)
+                handler = dbHandler()
+                name = handler.get_user_info_from_ip(address[0])
+                handler.close()
+                if name is not None:
+                    client = (address[0], name)
+                    connection = TCPCnxn(str(address), client, clientSckt,
+                                         self.recvQueue, self.msgTypes)
+                    connection.start()
+                    self.connections.append(connection)
+                else:
+                    clientSckt.shutdown(socket.SHUT_RDWR)
+                    print "Connection refused"
             except socket.error:
                 break
 
@@ -93,9 +101,10 @@ class TCPLstnr(threading.Thread):
 class TCPCnxn(threading.Thread):
     """Thread listening to connected endpoint"""
 
-    def __init__(self, name, clientSckt, recvQueue):
+    def __init__(self, name, client, clientSckt, recvQueue):
         super(TCPCnxn, self).__init__()
         self.name = name
+        self.client = client
         self.clientSckt = clientSckt
         self.recvQueue = recvQueue
         self.killFlag = threading.Event()
@@ -104,29 +113,21 @@ class TCPCnxn(threading.Thread):
         print "Connection established with " + str(self.getRemoteAddress())
         while not self.killFlag.isSet():
             try:
-                msg = [self]
-                content = ''
-                bid = {}
-                pickle_received = False
-                while not pickle_received:
-                    newContent = self.clientSckt.recv(__MAXSIZE__)
-                    if newContent != b'':
-                        content += newContent
-                        try:
-                            bid = cPickle.loads(content)
-                            pickle_received = True
-                        except EOFError:
-                            pass
-                    else:
-                        print >>sys.stderr, "Socket closing!"
-
-                msg.append(bid)
+                scktRdFile = self.clientSckt.makefile('rb')
+                msg = [self, self.client]
+                msg.append(cPickle.load(scktRdFile))
                 self.recvQueue.put(msg)
+            except EOFError:
+                print str(self.getRemoteAddress()) + " socket closed"
+                break
+            except cPickle.UnpicklingError:
+                pass
             except socket.error, error:
                 print >>sys.stderr, "Socket error while receiving. Code: "\
                                     + str(error[0]) + " Message: " + error[1]
                 break
-        self.clientSckt.close()
+        scktRdFile.close()
+        self.disconnect()
 
     def send(self, msg):
         try:
