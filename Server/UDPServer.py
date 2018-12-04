@@ -22,7 +22,8 @@ class UDPServer:
         self.DBHANDLER = dbHandler()
         self.client_ip_list = {}
         self.OFFER_BROADCAST_INTERVAL = 5.0
-        self.OFFER_COUNT = len(self.DBHANDLER.get_all_active_offers())
+        self.PREVIOUS_ACTIVE_OFFERS = self.DBHANDLER.get_all_active_offers()
+        self.OFFER_COUNT = len(self.PREVIOUS_ACTIVE_OFFERS)
 
         self.ACTION_LIST = {
             'REGISTER': self.register,
@@ -57,17 +58,21 @@ class UDPServer:
                                   self.sckt, self.recvQueue)
         self.UDPRcvr.start()
 
-    def offers_broadcast(self):
+        # TODO: restart unfinished offers
+        if len(self.PREVIOUS_ACTIVE_OFFERS) != 0:
+            self.update_offer_port_after_restart(self.PREVIOUS_ACTIVE_OFFERS)
+
+    def offers_broadcast(self):  # unused
         threading.Timer(self.OFFER_BROADCAST_INTERVAL, self.offers_broadcast).start()
-        print 'im the offer broadcaster', len(self.client_ip_list), self.OFFER_COUNT
+        # print 'im the offer broadcaster', len(self.client_ip_list), self.OFFER_COUNT
 
         # self.offers_broadcast_thread.daemon = True
         # self.offers_broadcast_thread.start()
 
         if len(self.client_ip_list) != 0:
-            print "client list not empty"
+            # print "client list not empty"
             if self.OFFER_COUNT != 0:
-                print 'offers not empty'
+                # print 'offers not empty'
                 db = dbHandler()
                 offers = db.get_all_active_offers()
                 response = {
@@ -159,7 +164,8 @@ class UDPServer:
                 response = {
                     'RQ': RQ,
                     'success': True,
-                    'message-type': 'LOGIN-CONF'
+                    'message-type': 'LOGIN-CONF',
+                    'name': sender_name
                 }
                 self.send(pickle.dumps(response), sender_info)
                 self.client_ip_list[sender_name] = sender_info
@@ -186,6 +192,14 @@ class UDPServer:
                 'message-type': 'DEREG-CONF'
             }
             self.send(pickle.dumps(response), sender_info)
+
+    def update_offer_port_after_restart(self, offers):
+        for offer in offers:
+            # TODO: restart TCP server for each
+            port = 0  # TODO: returns TCP server port number
+            status = self.DBHANDLER.update_offer_port(offer[0], port)
+            if status is not True:
+                print status[1]
 
     def new_item(self, item_id, description, minimum):
         message_type = {}  # todo: ???what's message type?
@@ -251,7 +265,7 @@ class UDPServer:
         status = self.DBHANDLER.user_isactive(sender_name)
         if status is not False:
             response = {
-                'RQ':RQ,
+                'RQ': RQ,
                 'message-type': 'LOGOUT-DENIED',
                 'reason': status[1]
             }
@@ -320,7 +334,7 @@ if __name__ == '__main__':
 
     try:
         udpserver = UDPServer(HOST, PORT, msgQueue)
-        # udpserver.offers_broadcast()
+        udpserver.offers_broadcast()
     except socket.error:
         sys.exit(1)
 

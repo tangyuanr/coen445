@@ -3,7 +3,9 @@
 import socket  # for sockets
 import sys  # for exit
 import time
+import threading
 import pickle
+import Queue
 from appJar import gui
 
 MAX_SIZE = 65535
@@ -13,8 +15,12 @@ SERVER_PORT = 0
 SERVER_IP = ''
 CLIENT_NAME = ''
 LOGGED_IN = False
+msgQueue = Queue.Queue()
 
 app = gui()
+
+
+# TODO: do something about the 'NEW-ITEM' message-type
 
 
 def checkStop():
@@ -66,7 +72,10 @@ def server_crash_handling():
     app.hideAllSubWindows()
     # TODO: destroy all bidding windows + error handling in TCP instances
     countdown = 30
+    app.startSubWindow('Connection error handling')
     app.addMessage('Server reconnection', 'Please wait while we try to reconnect to server\n')
+    app.stopSubWindow()
+    app.showSubWindow('Connection error handling')
     reconnected = False
     while countdown > 0:
         try:
@@ -85,7 +94,7 @@ def server_crash_handling():
             print msg
         app.setMessage('Server reconnection',
                        'Please wait while we try to reconnect to server\n' + str(countdown) + ' seconds left')
-        time.sleep(1)
+        time.sleep(2)
         countdown -= 1
 
     if not reconnected:
@@ -96,6 +105,7 @@ def server_crash_handling():
         sys.exit(0)
     else:
         app.setMessage('Server reconnection', 'Connection reestablished.')
+        app.destroySubWindow('Connection error handling')
         app.showAllSubWindows()
 
 
@@ -109,62 +119,54 @@ def get_items():
     try:
         s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
         RQ += 1
-        d = s.recvfrom(MAX_SIZE)
-        reply = pickle.loads(d[0])
-        print reply
-        if not reply['success']:
-            app.errorBox('connectionerror', reply['reason'])
-        else:
-            RQ += 1
-            return reply['items']
     except socket.error, msg:
         print msg
         app.errorBox('connectionerror', msg)
         server_crash_handling()
 
 
-def refresh():
+def refresh(offer_items):
     # items = [('ID', 'Owner', 'Description', 'IP', 'Minimum', 'Finished', 'Start time', 'Winner', 'Current highest')]
     items = []
-    for item in get_items():
+    for item in offer_items:
         items.append(list(item))
+    header = [('ID', 'Owner', 'Description', 'IP', 'Bidding Port', 'Minimum', 'Finished', 'Time left', 'Winner',
+               'Current highest')]
+    app.setTableHeaders('Offers table', header)
     app.replaceAllTableRows('Offers table', items)
+
+
+def offer_response_handler(data_packet):
+    if not data_packet['success']:
+        app.errorBox('Offer denied', data_packet['reason'])
+    else:
+        reply_message = '\n'.join(x + ': ' + str(data_packet[x]) for x in data_packet)
+        app.infoBox('submissionsuccess', reply_message)
+        get_items()
+        app.destroySubWindow('New offer window')
 
 
 def submit_offer():
     global RQ
-    request = {
-        'RQ': RQ,
-        'name': CLIENT_NAME,
-        'message-type': 'OFFER',
-        'description': app.getEntry('Description'),
-        'minimum': app.getEntry('Minimum')
-    }
-    temp_RQ = RQ
-    try:
-        s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
-
-        while 1:
-
-            d = s.recvfrom(MAX_SIZE)
-            reply = pickle.loads(d[0])
-            print reply
-            if reply['RQ'] != temp_RQ:
-                continue
-            else:
-                break
-        if not reply['success']:
-            app.errorBox('connectionerror', reply['reason'])
-        else:
-            reply_message = '\n'.join(x + ': ' + str(reply[x]) for x in reply)
-            app.infoBox('submissionsuccess', reply_message)
-            refresh()
-            app.destroySubWindow('New offer window')
-    except socket.error, msg:
-        print msg
-        app.errorBox('connectionerror', msg)
-        server_crash_handling()
-    RQ += 1
+    description = app.getEntry('Description')
+    minimum = app.getEntry('Minimum')
+    if description == '' or minimum < 1:
+        app.errorBox('Invalid offer', 'Invalid offer')
+    else:
+        request = {
+            'RQ': RQ,
+            'name': CLIENT_NAME,
+            'message-type': 'OFFER',
+            'description': app.getEntry('Description'),
+            'minimum': app.getEntry('Minimum')
+        }
+        try:
+            s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+            RQ += 1
+        except socket.error, msg:
+            print msg
+            app.errorBox('connectionerror', msg)
+            server_crash_handling()
 
 
 def make_offer():
@@ -194,6 +196,23 @@ def place_bid(
     app.showSubWindow('Bidding window ' + str(offer_id))
 
 
+def offer_broadcast_handler(data_packet):
+    if not LOGGED_IN:
+        pass
+    else:
+        refresh(data_packet['offers'])
+
+
+def refresh_offers_list(data_packet):
+    if not LOGGED_IN:
+        pass
+    else:
+        if not data_packet['success']:
+            app.errorBox('Cannot retrieve offers list', data_packet['reason'])
+        else:
+            refresh(data_packet['items'])
+
+
 def offers_window():
     app.startSubWindow('Offers window')
     app.addLabel('Offers window title', 'Hi ' + CLIENT_NAME)
@@ -204,71 +223,82 @@ def offers_window():
 
     items = [('ID', 'Owner', 'Description', 'IP', 'Bidding Port', 'Minimum', 'Finished', 'Time left', 'Winner',
               'Current highest')]
-    for item in get_items():
-        items.append(list(item))
+
     # print items
     app.addTable('Offers table', data=items, action=place_bid)
-    app.addButton('Refresh', func=refresh)
+    get_items()  # retrieve offers from server
+
+    app.addButton('Refresh', func=get_items)
 
     app.stopSubWindow()
     app.showSubWindow('Offers window')
 
 
+def register_handler(data_packet):
+    if not data_packet['success']:
+        app.errorBox('Registration failed', data_packet['reason'])
+    else:
+        global CLIENT_NAME
+        CLIENT_NAME = data_packet['name']
+        app.destroySubWindow('Register login window')
+
+        offers_window()
+
+
 def register():
     global RQ
     name = app.getEntry('Name')
-    request = {
-        'RQ': RQ,
-        'name': name,
-        'message-type': 'REGISTER'
-    }
-    try:
-        s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
-        RQ += 1
-        d = s.recvfrom(MAX_SIZE)
-        reply = pickle.loads(d[0])
-        print reply
-        if not reply['success']:
-            app.errorBox('connectionerror', reply['reason'])
-        else:
-            global CLIENT_NAME
-            CLIENT_NAME = name
-            app.destroySubWindow('Register login window')
+    ip = app.getEntry('Bidding IP')
+    if name == '' or ip == '':
+        app.errorBox('Empty username', 'Username cannot be empty')
+    else:
+        request = {
+            'RQ': RQ,
+            'name': name,
+            'ip': ip,
+            'message-type': 'REGISTER'
+        }
+        try:
+            s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
+            RQ += 1
+        except socket.error, msg:
+            print msg
+            app.errorBox('connectionerror', msg)
+            server_crash_handling()
 
-            offers_window()
-    except socket.error, msg:
-        print msg
-        app.errorBox('connectionerror', msg)
-        server_crash_handling()
+
+def login_failed_handler(data_packet):
+    app.errorBox('Login failed', data_packet['reason'])
+
+
+def login_success_handler(data_packet):
+    global CLIENT_NAME
+    CLIENT_NAME = data_packet['name']
+    app.destroySubWindow('Register login window')
+
+    offers_window()
 
 
 def login():
     global RQ
     name = app.getEntry('Name')
-    request = {
-        'RQ': RQ,
-        'name': name,
-        'message-type': 'LOGIN'
-    }
-    try:
-        s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
-        RQ += 1
-        d = s.recvfrom(MAX_SIZE)
-        reply = pickle.loads(d[0])
-        print reply
-        if not reply['success']:
-            app.errorBox('connectionerror', reply['reason'])
-        else:
-            global CLIENT_NAME
-            CLIENT_NAME = name
+    ip = app.getEntry('Bidding IP')
+    if name == '' or ip == '':
+        app.errorBox('Empty user name', 'Fields cannot be empty')
+    else:
+        request = {
+            'RQ': RQ,
+            'name': name,
+            'ip': ip,
+            'message-type': 'LOGIN'
+        }
+        try:
+            s.sendto(pickle.dumps(request), (SERVER_IP, SERVER_PORT))
             RQ += 1
-            app.destroySubWindow('Register login window')
-
-            offers_window()
-    except socket.error, msg:
-        print msg
-        app.errorBox('connectionerror', msg)
-        server_crash_handling()
+        except socket.error, msg:
+            print msg
+            app.errorBox('connectionerror', msg)
+            server_crash_handling()
 
 
 def register_window():
@@ -276,13 +306,56 @@ def register_window():
 
     app.startSubWindow('Register login window')
     app.addLabel('instruction', text='Please log in or register with your unique name id and server port')
+    app.addLabelEntry('Bidding IP')
     app.addLabelEntry('Name')
-    app.addButton('Register', row=2, column=0, func=register)
-    app.addButton('Login', row=2, column=1, func=login)
+    app.addButton('Register', row=3, column=0, func=register)
+    app.addButton('Login', row=3, column=1, func=login)
     app.stopSubWindow()
 
     # app.show()
     app.showSubWindow('Register login window')
+    print 'here'
+
+    # UDP listener starts here
+    msgHandler()
+
+
+ACTION_LIST = {
+    'OFFER-BROADCAST': 0,
+    'UNREGISTER': register_handler,
+    'REGISTERED': register_handler,
+    'LOGIN-FAILED': login_failed_handler,
+    'LOGIN-CONF': login_success_handler,
+    'DEREG-DENIED': 0,
+    'DEREG-CONF': 0,
+    'NEW-ITEM': 0,
+    'ITEM-LIST': refresh_offers_list,
+    'OFFER-DENIED': offer_response_handler,
+    'OFFER-CONF': offer_response_handler,
+    'LOGOUT-DENIED': 0,
+    'LOGOUT-CONF': 0
+}
+
+
+# UDP listener
+def msgHandler():
+    global msgQueue
+    try:
+        while 1:
+            message = msgQueue.get()
+            if message is None:
+                continue
+            else:
+                data_packet = pickle.loads(message[0])
+                ACTION_LIST[data_packet['message-type']](data_packet)
+    except KeyboardInterrupt:
+        print "Keyboard interrupt"
+    except socket.error:
+        raise
+    finally:
+        print "client shut down"
+        s.close()
+    sys.exit()
 
 
 def connect():
@@ -299,12 +372,16 @@ def connect():
         addr = d[1]
         print reply
         if reply == 'OK':
-            global SERVER_PORT, SERVER_IP
+            global SERVER_PORT, SERVER_IP, msgQueue
             SERVER_PORT = port
             SERVER_IP = ip
+
+            UDPListener = UDPReceive(s, msgQueue)
+            UDPListener.start()
+
             register_window()
         else:
-            app.addLabel('error', 'Connection to server cannot be established')
+            app.errorBox('error', 'Connection to server cannot be established')
     except socket.error, msg:
         print msg
         app.errorBox('connectionerror', msg)
@@ -331,16 +408,25 @@ def initiate():
     app.go(startWindow='Initiation window')
 
 
-# class broadcastReceiver(threading.Thread):
-#     def __init__(self, sckt, rcvq):
-#         super(broadcastReceiver, self).__init__()
-#         self.socket = sckt
-#         self.receiveQueue = rcvq
-#
-#     def run(self):
-#         while 1:
-#             try:
-#
+class UDPReceive(threading.Thread):
+    """Copied UDPServer's UDPReceive function"""
+
+    def __init__(self, sckt, rcvQ):
+        super(UDPReceive, self).__init__()
+        self.socket = sckt
+        self.receiveQueue = rcvQ
+
+    def run(self):
+        while 1:
+            try:
+                data = self.socket.recvfrom(MAX_SIZE)
+                self.receiveQueue.put(data)
+            except socket.timeout:
+                pass
+            except socket.error, msg:
+                print msg
+            finally:
+                break
 
 
 if __name__ == '__main__':

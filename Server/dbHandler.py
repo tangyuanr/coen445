@@ -11,12 +11,12 @@ class dbHandler:
         self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS users(name VARCHAR primary key , IP VARCHAR , 
             socket INTEGER )""")
         self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS offers(ID INTEGER PRIMARY KEY autoincrement , 
-            name VARCHAR NOT NULL, description VARCHAR , ownerIP VARCHAR , itemPort INTEGER DEFAULT 50000, 
+            name VARCHAR NOT NULL, description VARCHAR , ownerIP VARCHAR UNIQUE , itemPort INTEGER DEFAULT 50000, 
             minimum UNSIGNED INTEGER , 
             finished BIT DEFAULT 0, timeleft INTEGER DEFAULT 3000, winnername VARCHAR DEFAULT 'NONE', 
             finalprice INTEGER DEFAULT 0)""")
-        self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS biddings(ID INTEGER PRIMARY KEY AUTOINCREMENT , 
-            itemID INTEGER, biddername VARCHAR, amount INTEGER, t TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS biddings(ID INTEGER PRIMARY KEY AUTOINCREMENT ,
+        #     itemID INTEGER, biddername VARCHAR, amount INTEGER, t TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         # biddings(itemID)=offers(ID), biddings(biddername)=users(name)
         self.CONN.commit()
 
@@ -35,9 +35,17 @@ class dbHandler:
         result = self.CURSOR.execute("""SELECT * FROM users WHERE name = ?""", (name, )).fetchone()
         return result
 
+    def get_user_info_from_ip(self, ip):
+        result = self.CURSOR.execute("""SELECT * FROM users WHERE IP=?""", (ip, )).fetchone()
+        return result
+
     def is_registered(self, name):
         # assume that no user will use duplicated IP address when registering
         result = self.CURSOR.execute("""SELECT * FROM users WHERE name = ?""", (name,)).fetchall()
+        return len(result) != 0
+
+    def ip_is_registered(self, ip):
+        result = self.CURSOR.execute("""SELECT * FROM users WHERE IP=?""", (ip,)).fetchall()
         return len(result) != 0
 
     def update_user_address(self, name, ip, sckt):  # TODO test update user ip and port
@@ -55,21 +63,19 @@ class dbHandler:
         result = self.CURSOR.execute("""SELECT * FROM offers WHERE name = ? AND finished = 0""", (name,)).fetchall()
         return result
 
-    def get_user_active_biddings(self, name):
-        result = self.CURSOR.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID WHERE biddings.biddername=?  AND offers.finished=0""", (name,)).fetchall()
-        return result
-
     def user_isactive(self, name):
         if len(self.get_user_active_offers(name)) != 0:
             return True, "The auction for your offer(s) is not finished. Please wait until the end or cancel your offer(s)."
-        if len(self.get_user_active_biddings(name)) != 0:
+        active = name in self.CURSOR.execute("""SELECT * FROM offers WHERE winnername=?""", (name,)).fetchall()
+        if active:
             return True, "The auction for the item(s) you have placed bids is not finished. Please wait until the end."
         return False
 
     def deregister(self, name):
         if len(self.get_user_active_offers(name)) != 0:
             return False, "The auction for your offer(s) is not finished. Please wait until the end or cancel your offer(s)."
-        if len(self.get_user_active_biddings(name)) != 0:
+        active = name in self.CURSOR.execute("""SELECT * FROM offers WHERE winnername=?""", (name,)).fetchall()
+        if active:
             return False, "The auction for the item(s) you have placed bids is not finished. Please wait until the end."
         try:
             self.CURSOR.execute("""DELETE FROM users WHERE name=?""", (name,))
@@ -121,17 +127,18 @@ class dbHandler:
             return False, "Offer %s does not exist" % itemID
         return result[0]
 
-    def start_offer(self, itemPort):
+    def update_offer_port(self, itemID, itemPort):
         try:
-            self.CURSOR.execute("""UPDATE offers SET itemPort=?""",(itemPort,))
+            self.CURSOR.execute("""UPDATE offers SET itemPort=? WHERE ID=?""", (itemPort,itemID))
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
         return True
 
-    def update_offer_time_left(self, timeleft):
+    """Item related functions"""
+    def update_offer_time_left(self, itemID, timeleft):
         try:
-            self.CURSOR.execute("""UPDATE offers SET timeleft=?""", (timeleft,))
+            self.CURSOR.execute("""UPDATE offers SET timeleft=? WHERE ID=?""", (timeleft,itemID))
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
@@ -140,32 +147,15 @@ class dbHandler:
     def new_bidding(self, itemID, biddername, amount):
         # assume that same user can bid on the same item as many times as he likes
         # also assume that the previous owner of the item can bid on his offered item
-        if not self.is_registered(biddername):
-            return False, "User %s is not registered for bidding" % biddername
-        if not self.offer_exists(itemID):
-            return False, "Offer %s does not exist" % itemID
-        if self.offer_isfinished(itemID):
-            return False, "Cannot place bid, item %s has finished bidding"
-
-        current_highest = self.CURSOR.execute("""SELECT MAX(amount) FROM biddings WHERE itemID =?""", (itemID,)).fetchone()[0]
-
-        if current_highest is not None and amount <= current_highest:
-            return False, "Need to bid higher than %s" % current_highest
         try:
-            self.CURSOR.execute("""INSERT INTO biddings(itemID, biddername, amount) VALUES(?,?,?)""", (itemID, biddername, amount))
-            self.CURSOR.execute("""UPDATE offers SET finalprice=? WHERE ID=?""", (amount, itemID))
+            self.CURSOR.execute("""UPDATE offers SET finalprice=?, winnername=? WHERE ID=?""", (amount, biddername, itemID))
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
         return True
 
     def highest_bidding(self, offer_itemID):
-        offer_look = self.CURSOR.execute("""SELECT * FROM offers WHERE ID=?""", (offer_itemID,)).fetchone()
-        if offer_look is None:
-            return False, "Offer %s does not exist" % offer_itemID
-        result = self.CURSOR.execute("""SELECT biddername, MAX(amount) FROM biddings WHERE itemID=?""", (offer_itemID,)).fetchone()
-        if result is None:
-            return False, "No one has bid on %s" % offer_itemID  # todo or return 0
+        result = self.CURSOR.execute("""SELECT winnername, finalprice FROM offers WHERE ID=?""", (offer_itemID,)).fetchone()
         return result
 
     def close_bidding(self, itemID):
@@ -194,7 +184,7 @@ if __name__ == "__main__":
     print handler.new_offer('nobody', 'number 4 vase', '1234679', 2)
     print handler.all_offers()
     print handler.offer_isfinished(2)
-    print handler.get_offer_time(2)
+    # print handler.get_offer_time(2)
 
     print handler.new_bidding(3, 'nobody', 6)
     print handler.new_bidding(3, 'nobody', 6)
@@ -206,7 +196,7 @@ if __name__ == "__main__":
     print handler.highest_bidding(3)
     # print handler.close_bidding(3)
     print handler.get_user_active_offers('nobody')
-    print handler.get_user_active_biddings('nobody')
+    # print handler.get_user_active_biddings('nobody')
     # cur = handler.get_cursor()
     # cur.execute("""SELECT * FROM offers INNER JOIN biddings ON offers.ID = biddings.itemID""", ("nobody", )).fetchall()
     print handler.all_offers()
