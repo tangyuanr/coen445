@@ -11,7 +11,7 @@ class dbHandler:
         self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS users(name VARCHAR primary key , IP VARCHAR , 
             socket INTEGER )""")
         self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS offers(ID INTEGER PRIMARY KEY autoincrement , 
-            name VARCHAR NOT NULL, description VARCHAR , ownerIP VARCHAR UNIQUE , itemPort INTEGER DEFAULT 50000, 
+            name VARCHAR NOT NULL, description VARCHAR , ownerIP VARCHAR , itemPort INTEGER DEFAULT 50000, 
             minimum UNSIGNED INTEGER , 
             finished BIT DEFAULT 0, timeleft INTEGER DEFAULT 3000, winnername VARCHAR DEFAULT 'NONE', 
             finalprice INTEGER DEFAULT 0)""")
@@ -112,8 +112,8 @@ class dbHandler:
             self.CONN.commit()
         except sqlite3.Error as e:
             return False, e.message
-        offer_id = self.CURSOR.execute("""SELECT ID, description, minimum FROM offers WHERE description=? AND name=?""", (description, name)).fetchone()
-        return True, offer_id, description, minimum
+        offer_id = self.CURSOR.execute("""SELECT ID FROM offers WHERE description=? AND name=?""", (description, name)).fetchone()
+        return True, offer_id[0], description, minimum
 
     def all_offers(self):
         return self.CURSOR.execute("""SELECT * FROM main.offers""").fetchall()

@@ -23,7 +23,7 @@ class UDPServer:
         self.recvQueue = msgQueue
         self.DBHANDLER = dbHandler()
         self.client_ip_list = {}
-        self.OFFER_BROADCAST_INTERVAL = 5.0
+        self.OFFER_BROADCAST_INTERVAL = 10.0
         self.PREVIOUS_ACTIVE_OFFERS = self.DBHANDLER.get_all_active_offers()
         self.OFFER_COUNT = len(self.PREVIOUS_ACTIVE_OFFERS)
 
@@ -60,8 +60,9 @@ class UDPServer:
                                   self.sckt, self.recvQueue)
         self.UDPRcvr.start()
 
-        # TODO: restart unfinished offers
+        # restart unfinished offers
         if len(self.PREVIOUS_ACTIVE_OFFERS) != 0:
+            print 'Restarting unfinished offers'
             self.update_offer_port_after_restart(self.PREVIOUS_ACTIVE_OFFERS)
 
     def offers_broadcast(self):  # unused
@@ -138,6 +139,7 @@ class UDPServer:
             }
             self.send(cPickle.dumps(response), sender_info)
             self.client_ip_list[sender_name] = sender_info
+        print 'Response: ', response
 
     def login(self, sender_info, data_packet):
         print "***************LOGIN**************************"
@@ -171,6 +173,7 @@ class UDPServer:
                 }
                 self.send(cPickle.dumps(response), sender_info)
                 self.client_ip_list[sender_name] = sender_info
+        print 'Response: ', response
 
     def deregister(self, sender_info, data_packet):
         # this should be an idempotent function, return true unless the db malfunctions
@@ -194,6 +197,7 @@ class UDPServer:
                 'message-type': 'DEREG-CONF'
             }
             self.send(cPickle.dumps(response), sender_info)
+        print 'Response:', response
 
     def update_offer_port_after_restart(self, offers):
         for offer in offers:
@@ -210,9 +214,11 @@ class UDPServer:
                 print status[1]
 
     def new_item(self, item_id, description, minimum, ownerdetail):
+        print '******************NEW-ITEM********************'
         new_bidding_item = Item(item_id, description, minimum, ownerdetail, self.sckt)
         new_bidding_item.start()
         bidding_port = new_bidding_item.server.getSocketAddress()[1]
+        # TODO: update offer port after started bidding TCP server
         response = {
             'message-type': 'NEW-ITEM',
             'item-id': item_id,
@@ -223,9 +229,11 @@ class UDPServer:
 
         for client in self.client_ip_list:
             self.send(cPickle.dumps(response), self.client_ip_list[client])
+            print 'Client: ', self.client_ip_list[client], 'Response: ', response
         return bidding_port
 
     def get_items(self, sender_info, data_packet):  # TODO: select active offers only
+        print '*****************GET-ITEMS*******************'
         items = self.DBHANDLER.all_offers()
         response = {
             'RQ': data_packet['RQ'],
@@ -234,6 +242,7 @@ class UDPServer:
             'items': items
         }
         self.send(cPickle.dumps(response), sender_info)
+        print 'Response: ', response
 
     def offer(self, sender_info, data_packet):
         print "********************OFFER**********************"
@@ -253,6 +262,7 @@ class UDPServer:
                 'reason': status[1]
             }
             self.send(cPickle.dumps(response), sender_info)
+            # TODO: call new_item()
         else:
             response = {
                 'RQ': RQ,
@@ -264,6 +274,7 @@ class UDPServer:
             }
             self.send(cPickle.dumps(response), sender_info)
             self.new_item(status[0], status[1], status[2], (sender_name, sender_info))
+        print 'Response: ', response
 
     def logout(self, sender_info, data_packet):
         print "****************LOGOUT****************"
@@ -292,6 +303,7 @@ class UDPServer:
             self.send(cPickle.dumps(response), sender_ip)
 
     def receive(self, message):
+        print '\nReception:'
         sender_info = message[1]
         print "sender info: ", sender_info
         data_packet = cPickle.loads(message[0])
@@ -338,7 +350,7 @@ class UDPReceive(threading.Thread):
 
 if __name__ == '__main__':
     HOST = ''  # Symbolic name meaning all available interfaces
-    PORT = 9999  # Arbitrary non-privileged port
+    PORT = 8888  # Arbitrary non-privileged port
     msgQueue = Queue.Queue()
 
     try:

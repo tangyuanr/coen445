@@ -29,11 +29,7 @@ def test_func(btn):
 """UI RELATED FLAGS"""
 REGISTER_WINDOW_UP = False
 
-
 app = gui()
-
-
-# TODO: do something about the 'NEW-ITEM' message-type
 
 
 def checkStop():
@@ -49,7 +45,7 @@ def checkStop():
     else:
         s.close()
         print "socket closed"
-        sys.exit()
+        sys.exit(0)
         # return True
 
 
@@ -145,8 +141,8 @@ def refresh(offer_items):
         items.append(list(item))
     header = [('ID', 'Owner', 'Description', 'IP', 'Bidding Port', 'Minimum', 'Finished', 'Time left', 'Winner',
                'Current highest')]
-    app.setTableHeaders('Offers table', header)
-    app.replaceAllTableRows('Offers table', items)
+    # app.setTableHeaders('Offers table ' + CLIENT_NAME, header)
+    app.replaceAllTableRows('Offers table ' + CLIENT_NAME, items)
 
 
 def offer_response_handler(data_packet):
@@ -195,18 +191,27 @@ def make_offer():
     app.showSubWindow('New offer window')
 
 
+def bidding_stop_func(win):
+    app.destroySubWindow(win)
+
+
 def place_bid(
         rowNumber):  # TODO: patch client to TCP bidding, also make sure the UDPServer sets each new offer with valid TCP port
-    offer_info = app.getTableRow('Offers table', rowNumber)
+    offer_info = app.getTableRow('Offers table ' + CLIENT_NAME, rowNumber)
     print offer_info
     offer_id = offer_info[0]
-    app.startSubWindow('Bidding window ' + str(offer_id))
-    app.addLabel('l5', 'Biddings for item ' + str(offer_id))
+    app.startSubWindow('Bidding window ' + str(offer_id), stopfunc=bidding_stop_func)
+    app.addLabel('lable'+str(offer_id), 'Biddings for item ' + str(offer_id))
 
     # TODO: request bidding data from TCP Server and start a table
 
     app.stopSubWindow()
     app.showSubWindow('Bidding window ' + str(offer_id))
+
+
+def new_item_handler(data_packet):
+    app.infoBox(title='New arrival: ' + str(data_packet['item-id']),
+                message='The auction for a new item has just begun, please refresh the offers page to view more details')
 
 
 def offer_broadcast_handler(data_packet):
@@ -227,32 +232,34 @@ def refresh_offers_list(data_packet):
 
 
 def offers_window():
-    app.startSubWindow('Offers window')
+    app.startSubWindow('Offers window ' + CLIENT_NAME, stopfunc=checkStop)
     app.addLabel('Offers window title', 'Hi ' + CLIENT_NAME)
 
     app.addButton('Make offer', func=make_offer)
 
     app.addLabel('l1', 'Active items')
 
-    items = [('ID', 'Owner', 'Description', 'IP', 'Bidding Port', 'Minimum', 'Finished', 'Time left', 'Winner',
-              'Current highest')]
+    items = ('ID', 'Owner', 'Description', 'IP', 'Bidding Port', 'Minimum', 'Finished', 'Time left', 'Winner',
+             'Current highest')
 
     # print items
-    app.addTable('Offers table', data=items, action=place_bid)
+    app.addTable('Offers table ' + CLIENT_NAME, data=items, action=place_bid)
+    app.setTableHeaders('Offers table ' + CLIENT_NAME, data=items)
     get_items()  # retrieve offers from server
 
     app.addButton('Refresh', func=get_items)
 
     app.stopSubWindow()
-    app.showSubWindow('Offers window')
+    app.showSubWindow('Offers window ' + CLIENT_NAME)
 
 
 def register_handler(data_packet):
     if not data_packet['success']:
         app.errorBox('Registration failed', data_packet['reason'])
     else:
-        global CLIENT_NAME
+        global CLIENT_NAME, LOGGED_IN
         CLIENT_NAME = data_packet['name']
+        LOGGED_IN = True
         app.destroySubWindow('Register login window')
 
         offers_window()
@@ -285,8 +292,9 @@ def login_failed_handler(data_packet):
 
 
 def login_success_handler(data_packet):
-    global CLIENT_NAME
+    global CLIENT_NAME, LOGGED_IN
     CLIENT_NAME = data_packet['name']
+    LOGGED_IN = True
     app.destroySubWindow('Register login window')
 
     offers_window()
@@ -338,7 +346,7 @@ ACTION_LIST = {
     'LOGIN-CONF': login_success_handler,
     'DEREG-DENIED': 0,
     'DEREG-CONF': 0,
-    'NEW-ITEM': 0,
+    'NEW-ITEM': new_item_handler,
     'ITEM-LIST': refresh_offers_list,
     'OFFER-DENIED': offer_response_handler,
     'OFFER-CONF': offer_response_handler,
@@ -350,6 +358,7 @@ ACTION_LIST = {
 def action_dispatcher(data_packet):
     action = data_packet['message-type']
     ACTION_LIST[action](data_packet)
+
 
 # UDP listener
 def msgHandler():
@@ -383,10 +392,10 @@ def connect():
         message = 'CONNECT'
         s.sendto(cPickle.dumps(message), (host, port))
         # print 'line24'
-        # d = s.recvfrom(MAX_SIZE)
-        # reply = d[0]
-        # addr = d[1]
-        reply = msgQueue.get()[0]
+        d = s.recvfrom(MAX_SIZE)
+        reply = d[0]
+        addr = d[1]
+        # reply = msgQueue.get()[0]
         print reply
         if reply == 'OK':
             global SERVER_PORT, SERVER_IP
@@ -394,6 +403,7 @@ def connect():
             SERVER_IP = ip
 
             # UDP listener starts here
+            UDPListener.start()
             app.thread(msgHandler)
 
             register_window()
@@ -403,7 +413,9 @@ def connect():
     except socket.error, msg:
         print msg
         app.errorBox('connectionerror', msg)
-        server_crash_handling()
+        # app.stop()
+        # s.close()
+        # sys.exit()
 
 
 def initiate(ip, port):
@@ -411,22 +423,25 @@ def initiate(ip, port):
     print initiation_complete
 
     # app.startSubWindow('Initiation window', stopfunc=checkStop)
-    app.startSubWindow('Initiation window')
+    app.startSubWindow('Initiation window', stopfunc=checkStop)
 
     app.addLabel('initiate', text=initiation_complete)
     """Try to connect to UDP server"""
     app.addLabel('serverconnection', text='Please enter the server port number to establish connection')
     app.addLabel('l34', 'Enter server IP:')
     app.addEntry('Server ip')
+    app.setEntry('Server ip', text=ip)
     app.addLabel('l2342', 'Enter server port:')
     app.addNumericEntry('Server port')
+    app.setEntry('Server port', 8888)
     app.setEntryMaxLength('Server port', 5)
     app.addButton('server_connect', connect)
     app.stopSubWindow()
 
-    app.startSubWindow('Register login window')
+    app.startSubWindow('Register login window', stopfunc=checkStop)
     app.addLabel('instruction', text='Please log in or register with your unique name id and server port')
     app.addLabelEntry('Bidding IP')
+    app.setEntry('Bidding IP', text=socket.gethostbyname(socket.gethostname()))
     app.addLabelEntry('Name')
     app.addButton('Register', row=3, column=0, func=register)
     app.addButton('Login', row=3, column=1, func=login)
@@ -467,7 +482,6 @@ if __name__ == '__main__':
         client_ip = socket.gethostbyname(socket.gethostname())
         client_port = socket.socket.getsockname(s)
         UDPListener = UDPReceive('Client UDP', threading.Event(), s, msgQueue)
-        UDPListener.start()
 
         initiate(client_ip, client_port)
     except socket.error:
