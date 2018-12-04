@@ -22,7 +22,8 @@ while not killFlag:
         print str(reply)
 
     except socket.error, msg:
-        print 'Error'
+        killFlag = True
+        print 'Error ' + str(msg)
 
 sock.shutdown(socket.SHUT_WR)
 sock.close()

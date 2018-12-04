@@ -2,6 +2,7 @@ import socket
 import Queue
 import threading
 import sys
+import cPickle
 
 __MAXSIZE__ = 1024
 
@@ -10,11 +11,10 @@ class TCPServer:
     """Opens a TCP socket with host and port as arguments. Starts a thread for
        listening and each client, sending is in main thread."""
 
-    def __init__(self, HOST, PORT, msgQueue, msgTypes,  MAXSIZE=4096):
+    def __init__(self, msgQueue, HOST='', PORT=0, MAXSIZE=4096):
         self.HOST = HOST
         self.PORT = PORT
         self.recvQueue = msgQueue
-        self.msgTypes = msgTypes
         self.connections = []
 
         global __MAXSIZE__
@@ -63,14 +63,13 @@ class TCPLstnr(threading.Thread):
     """Thread listening to new connections.
        Opens new thread on new connection"""
 
-    def __init__(self, name, serverSckt, recvQueue, connections, msgTypes):
+    def __init__(self, name, serverSckt, recvQueue, connections):
         super(TCPLstnr, self).__init__()
         self.name = name
         self.serverSckt = serverSckt
         self.recvQueue = recvQueue
         self.connections = connections
         self.killFlag = threading.Event()
-        self.msgTypes = msgTypes
 
     def run(self):
         while not self.killFlag.isSet():
@@ -78,6 +77,7 @@ class TCPLstnr(threading.Thread):
                 self.serverSckt.listen(5)
                 clientSckt, address = self.serverSckt.accept()
                 print "New connection from " + str(address)
+                # TODO: check if IP is in database
                 connection = TCPCnxn(str(address), clientSckt,
                                      self.recvQueue, self.msgTypes)
                 connection.start()
@@ -93,28 +93,35 @@ class TCPLstnr(threading.Thread):
 class TCPCnxn(threading.Thread):
     """Thread listening to connected endpoint"""
 
-    def __init__(self, name, clientSckt, recvQueue, msgTypes):
+    def __init__(self, name, clientSckt, recvQueue):
         super(TCPCnxn, self).__init__()
         self.name = name
         self.clientSckt = clientSckt
         self.recvQueue = recvQueue
         self.killFlag = threading.Event()
-        self.msgTypes = msgTypes
 
     def run(self):
         print "Connection established with " + str(self.getRemoteAddress())
         while not self.killFlag.isSet():
             try:
-                type = self.clientSckt.recv(1)
-                if type in self.msgTypes:
-                    content = self.clientSckt.recv(self.msgTypes[type])
-                    msg = [self]
-                    msg.append(type)
-                    msg.append(content)
-                    self.recvQueue.put(msg)
-                else:
-                    print >>sys.stderr, "Invalid message type. Closing socket."
-                    break
+                msg = [self]
+                content = ''
+                bid = {}
+                pickle_received = False
+                while not pickle_received:
+                    newContent = self.clientSckt.recv(__MAXSIZE__)
+                    if newContent != b'':
+                        content += newContent
+                        try:
+                            bid = cPickle.loads(content)
+                            pickle_received = True
+                        except EOFError:
+                            pass
+                    else:
+                        print >>sys.stderr, "Socket closing!"
+
+                msg.append(bid)
+                self.recvQueue.put(msg)
             except socket.error, error:
                 print >>sys.stderr, "Socket error while receiving. Code: "\
                                     + str(error[0]) + " Message: " + error[1]
@@ -142,8 +149,7 @@ if __name__ == '__main__':
     HOST = ''
     PORT = 8888
     recvQueue = Queue.Queue()
-    msgTypes = {'A': 16}
-    TCPServer = TCPServer(HOST, PORT, recvQueue, msgTypes)
+    TCPServer = TCPServer(recvQueue, HOST, PORT)
     print "Connection open on " + str(TCPServer.getSocketAddress())
 
     try:
@@ -159,7 +165,7 @@ if __name__ == '__main__':
             else:
                 print "Received data from " + str(data[0].getRemoteAddress())
                 print str(data[2])
-                reply = "You sent: " + data[1]
+                reply = "You sent: " + data[2]
                 data[0].send(reply)
     except KeyboardInterrupt:
         TCPServer.shutdown()
