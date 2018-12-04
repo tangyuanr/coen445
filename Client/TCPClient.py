@@ -1,6 +1,7 @@
 #! /usr/bin/python
 
 import socket
+import Queue
 import threading
 import sys
 import cPickle
@@ -53,7 +54,8 @@ class TCPClient (threading.Thread):
     def getRemoteAddress(self):
         return self.sckt.getpeername()
 
-if __name__  == '__main__':
+
+if __name__ == '__main__':
     Host = ''
     Port = 8888
     msgQueue = Queue.Queue()
@@ -63,12 +65,16 @@ if __name__  == '__main__':
     try:
         while(1):
             nbid = {
-                "RQ": rq++,
+                "RQ": rq,
                 "ID": 99,
                 "AMT": amt
             }
+            rq += 1
             amt += 10
             client.send(cPickle.dumps(nbid, -1))
-            msg = msgQueue.get(true, 1)
-            if msg["T"] == "HI":
-                print "Highest bid is " + str(msg["AMT"])
+            msg = msgQueue.get(True, 1)
+            if msg is not None:
+                if msg["T"] is "HI":
+                    print "Highest bid is " + str(msg["AMT"])
+    except sys.error:
+        pass
