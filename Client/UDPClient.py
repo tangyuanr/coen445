@@ -8,6 +8,7 @@ import cPickle
 import Queue
 from Server.UDPServer import UDPReceive
 from appJar import gui
+from TCPClient import TCPClient
 from Bidding import Bidding
 
 MAX_SIZE = 65535
@@ -29,6 +30,7 @@ CLIENT_IP = ''
 CLIENT_PORT = 0
 LOGGED_IN = False
 TEST = 0
+CURRENT_BIDS = []
 
 
 def test_func(btn):
@@ -74,7 +76,7 @@ def dereg_handler(data_packet):
     else:
         app.stop()
         s.close()
-        sys.exit()
+        sys.exit(1)
 
 
 def deregister():
@@ -84,14 +86,9 @@ def deregister():
         'name': CLIENT_NAME,
         'message-type': 'DEREGISTER'
     }
-    try:
-        s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
-        RQ += 1
-        CURRENT_ACTION = 'DEREGISTER'
-    except socket.error, msg:
-        print msg
-        app.errorBox('connectionerror', msg)
-        server_crash_handling()
+    s.sendto(cPickle.dumps(request), (SERVER_IP, SERVER_PORT))
+    RQ += 1
+    CURRENT_ACTION = 'DEREGISTER'
 
 
 def server_crash_handling():
@@ -211,33 +208,62 @@ def make_offer():
 
 
 def bidding_stop_func(win):
+    print win
+    global CURRENT_BIDS
+    print CURRENT_BIDS
     app.destroySubWindow(win)
+    CURRENT_BIDS.remove(int(win) - 1)
 
 
-def bidding_thread_handler(offerid):
-    window_name = 'Bidding window ' + str(offerid)
+def bidding_thread_handler(ID, Owner, Description, IP, BidPort, Minimum, Finished, Timeleft, Winner, Highest):
+    window_name = str(ID)
+    print window_name
+    print ID, Owner, Description, IP, BidPort, Minimum, Finished, Timeleft, Winner, Highest
+    # bidding_queue = Queue.Queue()
+    # bidding_tcp_client = TCPClient(bidding_queue, '', 0)
+    # bidding_tcp_client.start()
+
+    count = 0
     while 1:
-        print 'inside bidding thread' + offerid
+        app.setLabel('label' + ID, str(count))
+        app.getLabel('label' + ID)
+
+        count += 1
+        time.sleep(1)
 
 
 def place_bid(
         rowNumber):  # TODO: patch client to TCP bidding, also make sure the UDPServer sets each new offer with valid TCP port
-    offer_info = app.getTableRow('Offers table ' + CLIENT_NAME, rowNumber)
-    print offer_info
+    global CURRENT_BIDS
+    if rowNumber in CURRENT_BIDS:
+        app.errorBox('Duplicate bidding window', 'Cannot open multiple bid windows on the same item')
 
-    # new_bidding = Bidding(offer_info, CLIENT_NAME, CLIENT_IP)
-    # new_bidding.start()
+    else:
 
-    offer_id = offer_info[0]
+        CURRENT_BIDS.append(rowNumber)
+        offer_info = app.getTableRow('Offers table ' + CLIENT_NAME, rowNumber)
+        print offer_info
 
-    window_name = 'Bidding window ' + str(offer_id)
-    app.startSubWindow(window_name, stopfunc=bidding_stop_func, threadfunc=bidding_thread_handler, threadArgs=offer_id)
-    app.addLabel('lable' + str(offer_id), 'Biddings for item ' + str(offer_id))
+        # new_bidding = Bidding(offer_info, CLIENT_NAME, CLIENT_IP)
+        # new_bidding.start()
 
-    # TODO: request bidding data from TCP Server and start a table
+        offer_id = offer_info[0]
+        offer_map = {
+            'ID': offer_info[0], 'Owner': offer_info[1], 'Description': offer_info[2], 'IP': offer_info[3],
+            'BidPort': offer_info[4], 'Minimum': offer_info[5], 'Finished': offer_info[6],
+            'Timeleft': offer_info[7], 'Winner': offer_info[8], 'Highest': offer_info[9]
+        }
 
-    app.stopSubWindow()
-    app.showSubWindow('Bidding window ' + str(offer_id))
+        window_name = str(offer_id)
+        app.startSubWindow(window_name, stopfunc=bidding_stop_func, threadfunc=bidding_thread_handler,
+                           threadArgs=offer_map)
+        app.addLabel('label' + str(offer_id), 'Biddings for item ' + str(offer_id))
+        print "label " + str(offer_id)
+
+        # TODO: request bidding data from TCP Server and start a table
+
+        app.stopSubWindow()
+        app.showSubWindow(str(offer_id))
 
 
 def new_item_handler(data_packet):

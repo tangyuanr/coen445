@@ -8,7 +8,7 @@ import cPickle
 
 class TCPClient (threading.Thread):
     def __init__(self, msgQueue, HOST, PORT):
-        super(TCPClient, self).init()
+        super(TCPClient, self).__init__()
         self.HOST = HOST
         self.PORT = PORT
         self.recvQueue = msgQueue

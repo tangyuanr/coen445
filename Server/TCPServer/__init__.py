@@ -3,7 +3,7 @@ import Queue
 import threading
 import sys
 import cPickle
-from Server.dbHandler import dbHandler
+from Server import dbHandler
 
 __MAXSIZE__ = 1024
 
