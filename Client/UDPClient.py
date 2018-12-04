@@ -45,7 +45,7 @@ app = gui('Main')
 
 
 def checkStop():
-    print "UESR IS CLOSING WINDOW"
+    print "USER IS CLOSING WINDOW"
     if LOGGED_IN:
         deregister()
     else:
@@ -62,7 +62,7 @@ app.setStopFunction(checkStop)
 def bid_over_handler(data_packet):
     if data_packet['message-type'] == 'NOT SOLD':
         app.infoBox('Item ' + data_packet['item-id'] + ' not sold', data_packet['reason'])
-    else:
+    elif data_packet['message-type'] == 'SOLD':
         app.infoBox('Item ' + data_packet['item-id'] + ' sold',
                     'Your item has been sold!\nWinner: ' + data_packet['name'] +
                     '\nWinner IP: ' + data_packet['winnerIP'] +

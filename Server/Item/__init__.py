@@ -78,7 +78,7 @@ class Item (threading.Thread):
             }
             self.highestBidder[0].send(cPickle.dumps(win, -1))
             soldto = {
-                "message-type": "soldto",
+                "message-type": "SOLD",
                 "id": self.itemID,
                 "name": self.highestBidder[1][0],
                 "ip": self.highestBidder[1][1],
@@ -88,7 +88,7 @@ class Item (threading.Thread):
             self.udpSocket.send(cPickle.dumps(soldto, -1), self.owner[1])
         else:
             notsold = {
-                "message-type": "notsold",
+                "message-type": "NOT SOLD",
                 "id": self.itemID,
                 "reason": "No valid bids"
             }
